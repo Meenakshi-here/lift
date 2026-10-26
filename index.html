@@ -140,6 +140,8 @@ button,input{ font:inherit; color:inherit; }
 .btn.quiet{ border-color:var(--stroke); background:transparent; color:var(--muted); }
 
 .notice{ border-radius:12px; padding:12px 14px; font-size:13.5px; border:1px solid rgba(245,165,36,.35); background:rgba(245,165,36,.07); color:#fbe3b8; }
+.notice b{ color:#fff; font-weight:600; } .notice code{ font-family:var(--font-mono); font-size:12.5px; }
+.notice ol{ margin:8px 0 0; padding-left:18px; display:grid; gap:4px; }
 .notice.info{ border-color:var(--stroke); background:var(--glass-2); color:var(--muted); }
 
 .how{ list-style:none; margin:0; padding:0; display:grid; gap:10px; counter-reset:s; }
@@ -273,7 +275,7 @@ footer{ color:var(--dim); font-size:12px; text-align:center; }
     </div>
 
     <div class="station-main">
-      <div class="well shaft-wrap"><canvas id="shaft" aria-label="Car position in the shaft"></canvas></div>
+      <div class="well shaft-wrap"><canvas id="shaft" aria-label="Lift position"></canvas></div>
       <div class="station-col">
         <div class="floor-panel" aria-live="polite">
           <div class="fp-meta"><span class="eyebrow">Floor · estimated</span><span class="fp-lift" id="liftNameLed">Lift</span></div>
@@ -307,9 +309,9 @@ footer{ color:var(--dim); font-size:12px; text-align:center; }
     <div class="notice" id="sensorMsg" hidden></div>
 
     <ol class="how">
-      <li><span><b>Lay the phone flat on the car floor</b>, near the centre, screen up.</span></li>
-      <li><span><b>Step back and stand still.</b> It calibrates once the phone is still, then waits for movement.</span></li>
-      <li><span><b>Ride to any floor.</b> Each trip is detected and graded when the car stops. Ride as many trips as you like.</span></li>
+      <li><span><b>Put the phone flat on the lift floor</b>, screen up, in the middle.</span></li>
+      <li><span><b>Step back and stand still for 2 seconds.</b> The app sets itself up, then waits for the lift to move.</span></li>
+      <li><span><b>Press a floor button and ride.</b> When the lift stops you get a report and a grade. Ride as many times as you like.</span></li>
     </ol>
 
     <details class="settings">
@@ -341,12 +343,12 @@ footer{ color:var(--dim); font-size:12px; text-align:center; }
   <details class="card method">
     <summary class="eyebrow">How it measures, and the limits used</summary>
     <div class="body">
-      <p>The accelerometer reads the force on the car floor about 60 times a second. The app turns that into the lift's vertical motion in five steps:</p>
+      <p>The accelerometer reads the force on the lift floor about 60 times a second. The app turns that into the lift's vertical motion in five steps:</p>
       <ol>
         <li><b>Find "up".</b> While the phone is still, the average reading is gravity. Projecting every sample onto it gives vertical acceleration, however the phone lies. The rest is sideways motion.</li>
         <li><b>Remove sensor offset.</b> The still periods before and after each trip give the sensor's offset, which is subtracted along the trip.</li>
         <li><b>Filter with zero phase lag.</b> Motion: 3 Hz low-pass. Jerk: derivative of a 2 Hz low-pass. Vibration: 1–25 Hz band (less if the phone samples slower). Filters run forward and backward so peaks keep their timing.</li>
-        <li><b>Integrate with zero-velocity correction.</b> Acceleration is integrated to speed and height. The car is stopped at both ends, so leftover speed is drift and is removed. This keeps travel within a few percent.</li>
+        <li><b>Integrate with zero-velocity correction.</b> Acceleration is integrated to speed and height. The lift is stopped at both ends, so leftover speed is drift and is removed. This keeps travel within a few percent.</li>
         <li><b>Score the ride</b> in the style of ISO 18738-1: peak start acceleration and stop deceleration, peak jerk, and A95 peak-to-peak vibration (the level 95% of 0.5 s windows stay under) in milli-g, measured at steady speed where the lift reaches it.</li>
       </ol>
       <div class="table-wrap"><table id="limitsTable"></table></div>
@@ -482,7 +484,7 @@ const Core = (() => {
     if (r('jerk') !== 'good') {
       const j = Math.max(m.startJerk, m.stopJerk);
       out.push({ level: r('jerk'), title: `Jerky ${harsher} (${j.toFixed(2)} m/s³).`,
-        cause: harsher === 'stop' ? 'Possible causes: deceleration profile too steep, brake applied before the car fully stops, or levelling hunting.'
+        cause: harsher === 'stop' ? 'Possible causes: deceleration profile too steep, brake applied before the lift fully stops, or levelling hunting.'
                                   : 'Possible causes: brake lifting late or early against the motor, or a steep acceleration ramp in the drive settings.' });
     }
     if (r('accel') !== 'good') {
@@ -490,7 +492,7 @@ const Core = (() => {
       out.push({ level: r('accel'), title: `Strong ${which} (${a.toFixed(2)} m/s²).`, cause: 'Passengers standing may lose balance. Check the drive acceleration and deceleration settings.' });
     }
     if (r('vibV') !== 'good') {
-      const f = m.domF, hint = !f ? '' : f < 5 ? 'Low-frequency bounce like this often comes from uneven rope tension or worn car isolation pads.' :
+      const f = m.domF, hint = !f ? '' : f < 5 ? 'Low-frequency bounce like this often comes from uneven rope tension or worn rubber pads under the lift cabin.' :
         f < 15 ? 'Vibration in this range often comes from the machine: motor, gearbox or drive tuning.' : 'Higher-frequency buzz often comes from roller guides, fans or loose panels.';
       out.push({ level: r('vibV'), title: `Vertical vibration ${m.vibV.toFixed(0)} mg${f ? `, strongest at ${f.toFixed(1)} Hz` : ''}.`, cause: hint });
     }
@@ -749,6 +751,7 @@ const Core = (() => {
   const cssCache = {};
   const css = name => cssCache[name] || (cssCache[name] = getComputedStyle(document.documentElement).getPropertyValue(name).trim());
   const STORE = 'eri.v1';
+  const QS = (() => { try { return new URLSearchParams(location.search); } catch (e) { return new URLSearchParams(); } })();
   const S = {
     mode: 'off', det: null, lastEvt: 0, evtCount: 0, rateT0: 0, rate: 0,
     hist: [], cumZ: 0, rides: [], settings: { lift: '', floorH: 3, startFloor: 0 },
@@ -770,18 +773,18 @@ const Core = (() => {
   let toastT;
   function toast(msg) { const t = $('#toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('show'), 2800); }
   function setChip(s, text) { $('#chip').dataset.s = s; $('#chipText').textContent = text; }
-  function sensorMsg(text) { const el = $('#sensorMsg'); el.hidden = !text; el.textContent = text || ''; }
+  function sensorMsg(html) { const el = $('#sensorMsg'); el.hidden = !html; el.innerHTML = html || ''; }
 
   // ---------- detector events ----------
   function onDet(type, d) {
-    if (type === 'ready') setChip('idle', S.mode === 'demo' ? 'Sample · waiting for motion' : 'Armed · waiting for motion');
-    if (type === 'moved') setChip('moved', 'Phone moved · keep it still');
-    if (type === 'rideStart') { S.tripPeak = 0; setChip('ride', d.dir > 0 ? 'Car moving up' : 'Car moving down'); }
+    if (type === 'ready') setChip('idle', S.mode === 'demo' ? 'Sample · waiting for the lift' : 'Ready · waiting for the lift to move');
+    if (type === 'moved') setChip('moved', 'Phone moved · put it down and keep still');
+    if (type === 'rideStart') { S.tripPeak = 0; setChip('ride', d.dir > 0 ? 'Going up' : 'Going down'); }
     if (type === 'rideEnd') handleRideEnd(d);
   }
   function handleRideEnd(e) {
     const res = Core.analyzeRide(e.samples, e.preEnd, e.postStart, { floorH: S.settings.floorH });
-    setChip('idle', S.mode === 'demo' ? 'Sample trip complete' : 'Armed · waiting for motion');
+    setChip('idle', S.mode === 'demo' ? 'Sample trip complete' : 'Ready · waiting for the lift to move');
     if (e.moved) { if (Math.abs(e.liveZ) > 1) S.cumZ += e.liveZ; toast('The phone moved during the trip, so it was not graded.'); return; }
     if (res.rejected) { toast(res.message); return; }
     S.cumZ += res.metrics.travel;
@@ -824,23 +827,37 @@ const Core = (() => {
     b.innerHTML = running ? '<svg viewBox="0 0 16 16" fill="currentColor"><rect x="3.5" y="3.5" width="9" height="9" rx="1.5"/></svg><span>Stop inspection</span>'
                           : '<svg viewBox="0 0 16 16" fill="currentColor"><path d="M4 2.5v11l9-5.5z"/></svg><span>Start inspection</span>';
   }
+  const IS_IOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const FILE_OPEN = /^(content|file):/.test(location.protocol);
+  const HTTPS_HELP = `<b>Sensors are blocked: this page was opened as a file${FILE_OPEN ? ' (for example from WhatsApp or the Files app)' : ''}.</b> Phones only give motion sensors to pages opened from an <b>https://</b> link.<ol><li>Put <code>index.html</code> online (GitHub Pages works from your phone).</li><li>Open that https link in Chrome and tap Start.</li></ol><div style="margin-top:6px">Replay sample ride still works here without sensors.</div>`;
+  const CHROME_BLOCKED = `<b>Chrome is blocking motion sensors for this site.</b><ol><li>Tap the icon at the left of the address bar.</li><li>Open <b>Permissions</b> (or <b>Site settings</b>) and set <b>Motion sensors</b> to <b>Allow</b>.</li><li>Reload the page and tap Start again.</li></ol>`;
+  const IOS_BLOCKED = `<b>Motion access was not allowed.</b> Close the tab, open the link again in Safari, tap Start and choose <b>Allow</b>.`;
   async function startLive() {
     sensorMsg('');
-    if (!('DeviceMotionEvent' in window)) { setChip('error', 'No motion sensor'); sensorMsg('This browser has no access to motion sensors. Open the page on your phone in Chrome or Safari.'); return; }
-    if (!window.isSecureContext) sensorMsg('Motion sensors only work on an https:// link. Host this file (for example on Netlify or GitHub Pages) and open that link on your phone.');
-    try {
-      if (typeof DeviceMotionEvent.requestPermission === 'function') {
+    if (!window.isSecureContext) { setChip('error', 'Needs an https link'); sensorMsg(HTTPS_HELP); return; }
+    if (!('DeviceMotionEvent' in window)) { setChip('error', 'No motion sensor'); sensorMsg('This browser has no motion sensors. Open the link on your phone in Chrome or Safari.'); return; }
+    if (typeof DeviceMotionEvent.requestPermission === 'function') {
+      try {
         const r = await DeviceMotionEvent.requestPermission();
-        if (r !== 'granted') { setChip('error', 'Motion access denied'); sensorMsg('Motion access was denied. In Safari, reload the page and tap Allow when asked.'); return; }
+        if (r !== 'granted' && IS_IOS) { setChip('error', 'Motion access not allowed'); sensorMsg(IOS_BLOCKED); return; }
+      } catch (e) { if (IS_IOS) { setChip('error', 'Motion access not allowed'); sensorMsg(IOS_BLOCKED); return; } }
+    }
+    try {
+      if (!IS_IOS && navigator.permissions && navigator.permissions.query) {
+        const p = await navigator.permissions.query({ name: 'accelerometer' });
+        if (p.state === 'denied') { setChip('error', 'Motion sensors blocked'); sensorMsg(CHROME_BLOCKED); return; }
       }
-    } catch (e) { setChip('error', 'Motion access failed'); sensorMsg('Could not get motion access: ' + e.message); return; }
+    } catch (e) {}
     stopDemo();
     S.det = new Core.Detector(onDet); resetLive(); S.evtCount = 0; S.rateT0 = 0; S.lastEvt = 0;
     window.addEventListener('devicemotion', onMotion);
-    S.mode = 'live'; setChip('calib', 'Calibrating · keep still'); setStartBtn(true); requestWake();
+    S.mode = 'live'; setChip('calib', 'Setting up · keep the phone still'); setStartBtn(true); requestWake();
     setTimeout(() => {
-      if (S.mode === 'live' && !S.lastEvt) { setChip('error', 'No sensor data'); sensorMsg('No motion data is arriving. Laptops and desktops have no accelerometer, so open this link on your phone. On Android, check that motion sensors are allowed for the site.'); }
-    }, 2000);
+      if (S.mode !== 'live' || S.lastEvt) return;
+      stopLive(); setChip('error', 'No sensor data');
+      const mobile = /Android|iPhone|iPad|iPod/.test(navigator.userAgent) || navigator.maxTouchPoints > 1;
+      sensorMsg(!mobile ? 'No motion data. Computers have no motion sensor: open this link on your phone.' : IS_IOS ? IOS_BLOCKED : CHROME_BLOCKED);
+    }, 2500);
   }
   function stopLive() {
     window.removeEventListener('devicemotion', onMotion);
@@ -854,10 +871,10 @@ const Core = (() => {
   function startDemo() {
     if (S.mode === 'live') stopLive();
     stopDemo();
-    const r = Core.makeRide({ travel: 12.2, vmax: 1.6, amax: 0.95, jStart: 1.1, jStop: 2.0, vibF: 11.5, vibA: 0.05, swayA: 0.035, pre: 3.5, post: 3.2, seed: (Math.random() * 1e6) | 0 });
+    const r = Core.makeRide({ travel: 12.2, vmax: 1.6, amax: 0.95, jStart: 1.1, jStop: 2.0, vibF: 11.5, vibA: 0.05, swayA: 0.035, pre: 3.5, post: 3.2, seed: +QS.get('seed') || ((Math.random() * 1e6) | 0) });
     S.det = new Core.Detector(onDet); resetLive(); S.mode = 'demo'; S.rate = 60;
     setChip('calib', 'Sample · calibrating'); $('#btnDemo').textContent = 'Stop sample';
-    const speed = 2.5, t0 = performance.now(); let i = 0;
+    const speed = +QS.get('demoSpeed') || 2.5, t0 = performance.now(); let i = 0;
     S.demoTimer = setInterval(() => {
       const tNow = (performance.now() - t0) / 1000 * speed;
       while (i < r.samples.length && r.samples[i].t <= tNow) feed(r.samples[i++]);
@@ -1229,7 +1246,7 @@ const Core = (() => {
       <div class="kpis">
         <div class="well kpi"><span class="eyebrow">Travel</span><b>${f1(Math.abs(m.travel))}<small>m</small></b><span class="sub">${f1(m.floors)} × ${f2(r.floorH)} m</span></div>
         <div class="well kpi"><span class="eyebrow">Top speed</span><b>${f2(m.vmax)}<small>m/s</small></b><span class="sub">${m.hasCruise ? `steady ${f1(m.cruiseTime)} s` : 'never steady'}</span></div>
-        <div class="well kpi"><span class="eyebrow">Trip time</span><b>${f1(m.tripTime)}<small>s</small></b><span class="sub">car in motion</span></div>
+        <div class="well kpi"><span class="eyebrow">Trip time</span><b>${f1(m.tripTime)}<small>s</small></b><span class="sub">moving time</span></div>
         <div class="well kpi"><span class="eyebrow">Avg speed</span><b>${f2(Math.abs(m.travel) / m.tripTime)}<small>m/s</small></b><span class="sub">${f1(Math.abs(m.travel) / m.tripTime * 60 / r.floorH)} floors/min</span></div>
       </div>
       <div class="metrics">
@@ -1356,6 +1373,7 @@ const Core = (() => {
 
   // ---------- boot ----------
   load(); bindSettings(); renderLimits(); renderReports();
+  if (!window.isSecureContext) { setChip('error', 'Needs an https link'); sensorMsg(HTTPS_HELP); }
   D.pos = S.settings.startFloor;
   $('#btnStart').onclick = () => (S.mode === 'live' ? stopLive() : startLive());
   $('#btnDemo').onclick = () => (S.demoTimer ? (stopDemo(), setChip('off', 'Standby')) : startDemo());
