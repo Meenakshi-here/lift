@@ -1,0 +1,1370 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Elevator Ride Inspector</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<meta name="description" content="Measure elevator ride quality with your phone: speed, travel, floor heights, acceleration, jerk and vibration, with a comfort grade.">
+<meta name="theme-color" content="#0a0b0e">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap">
+<style>
+/* Layout: one phone column of frosted instrument cards over an obsidian field.
+   Station card = cockpit: shaft | floor display + accel gauge, then a telemetry strip, the live trace and controls.
+   Report cards follow, newest first. Deliberately dark-only. */
+:root{
+  --bg:#0a0b0e;
+  --glass:rgba(19,22,29,.62); --glass-2:rgba(255,255,255,.035); --well:rgba(0,0,0,.32);
+  --stroke:rgba(255,255,255,.075); --stroke-2:rgba(255,255,255,.14);
+  --fg:#e9edf3; --muted:#8b93a5; --dim:#5b6375;
+  --cyan:#22d3ee; --cyan-glow:rgba(34,211,238,.55); --cyan-soft:rgba(34,211,238,.09);
+  --good:#34d399; --good-glow:rgba(52,211,153,.45);
+  --warn:#f5a524; --warn-glow:rgba(245,165,36,.45);
+  --bad:#fb5a6e; --bad-glow:rgba(251,90,110,.45);
+  --blue:#5b9dff; --violet:#a78bfa; --violet-soft:rgba(167,139,250,.09); --pink:#f472b6;
+  --font-ui:"Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono:"JetBrains Mono", ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+  --r-card:20px; --r-in:14px;
+  --shadow:inset 0 1px 0 rgba(255,255,255,.05), 0 24px 60px -24px rgba(0,0,0,.85), 0 2px 10px rgba(0,0,0,.35);
+  color-scheme:dark;
+  padding-top:env(safe-area-inset-top,0px); padding-bottom:env(safe-area-inset-bottom,0px);
+  -webkit-text-size-adjust:100%;
+}
+*,*::before,*::after{ box-sizing:border-box; }
+[hidden]{ display:none !important; }
+html{ background:var(--bg); }
+body{ margin:0; background:var(--bg); color:var(--fg); font:15px/1.55 var(--font-ui); -webkit-font-smoothing:antialiased; font-feature-settings:"cv11","ss01"; }
+.field-bg{ position:fixed; inset:0; z-index:0; pointer-events:none;
+  background:
+    radial-gradient(600px 380px at 12% -6%, rgba(34,211,238,.13), transparent 70%),
+    radial-gradient(520px 420px at 105% 38%, rgba(167,139,250,.08), transparent 70%),
+    radial-gradient(500px 360px at -10% 100%, rgba(52,211,153,.05), transparent 70%); }
+.field-bg::after{ content:""; position:absolute; inset:0;
+  background-image:linear-gradient(rgba(255,255,255,.022) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.022) 1px, transparent 1px);
+  background-size:32px 32px; -webkit-mask-image:linear-gradient(180deg,#000 0%,transparent 55%); mask-image:linear-gradient(180deg,#000 0%,transparent 55%); }
+.wrap{ position:relative; z-index:1; max-width:760px; margin:0 auto; padding-block:20px 56px;
+  padding-left:max(16px, env(safe-area-inset-left,0px)); padding-right:max(16px, env(safe-area-inset-right,0px));
+  display:flex; flex-direction:column; gap:20px; }
+h1,h2,h3{ margin:0; text-wrap:balance; }
+.mono, .num{ font-family:var(--font-mono); font-variant-numeric:tabular-nums slashed-zero; }
+.eyebrow{ font:600 10.5px/1.2 var(--font-ui); letter-spacing:.14em; text-transform:uppercase; color:var(--muted); }
+button,input{ font:inherit; color:inherit; }
+:focus-visible{ outline:2px solid var(--cyan); outline-offset:2px; }
+
+.card{ background:var(--glass); border:1px solid var(--stroke); border-radius:var(--r-card); box-shadow:var(--shadow);
+  -webkit-backdrop-filter:blur(18px) saturate(140%); backdrop-filter:blur(18px) saturate(140%); padding:20px; }
+.well{ background:var(--well); border:1px solid var(--stroke); border-radius:var(--r-in); }
+
+/* ---------- header ---------- */
+.top{ display:flex; gap:14px; align-items:center; }
+.mark{ width:44px; height:44px; flex:none; border-radius:12px; display:grid; place-items:center; color:var(--cyan);
+  background:linear-gradient(160deg, rgba(34,211,238,.18), rgba(34,211,238,.03)); border:1px solid rgba(34,211,238,.28);
+  box-shadow:0 0 24px -6px var(--cyan-glow), inset 0 1px 0 rgba(255,255,255,.08); }
+.top h1{ font:650 21px/1.15 var(--font-ui); letter-spacing:-.015em; }
+.top p{ margin:2px 0 0; color:var(--muted); font-size:13.5px; line-height:1.4; }
+@media (max-width:440px){ .top .ver{ display:none; } }
+.top .ver{ margin-left:auto; align-self:flex-start; font:500 10.5px/1 var(--font-mono); color:var(--dim); border:1px solid var(--stroke); border-radius:6px; padding:5px 7px; white-space:nowrap; }
+
+/* ---------- station ---------- */
+.station{ display:flex; flex-direction:column; gap:16px; }
+.station-bar{ display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; }
+.status{ display:inline-flex; align-items:center; gap:9px; padding:7px 12px 7px 10px; border-radius:999px; background:var(--glass-2); border:1px solid var(--stroke);
+  font:600 11.5px/1 var(--font-ui); letter-spacing:.08em; text-transform:uppercase; max-width:100%; }
+.status .dot{ width:8px; height:8px; border-radius:50%; background:var(--dim); flex:none; position:relative; }
+.status[data-s="idle"] .dot{ background:var(--good); box-shadow:0 0 0 3px rgba(52,211,153,.15), 0 0 10px var(--good-glow); }
+.status[data-s="ride"] .dot{ background:var(--cyan); box-shadow:0 0 0 3px rgba(34,211,238,.18), 0 0 12px var(--cyan-glow); }
+.status[data-s="calib"] .dot, .status[data-s="moved"] .dot{ background:var(--warn); box-shadow:0 0 0 3px rgba(245,165,36,.15), 0 0 10px var(--warn-glow); }
+.status[data-s="error"] .dot{ background:var(--bad); box-shadow:0 0 0 3px rgba(251,90,110,.15), 0 0 10px var(--bad-glow); }
+.status[data-s="ride"] .dot::after, .status[data-s="calib"] .dot::after{ content:""; position:absolute; inset:-5px; border-radius:50%; border:1.5px solid currentColor; color:inherit; animation:ping 1.4s cubic-bezier(0,0,.2,1) infinite; }
+.status[data-s="ride"] .dot::after{ border-color:var(--cyan); } .status[data-s="calib"] .dot::after{ border-color:var(--warn); }
+@keyframes ping{ 0%{ transform:scale(.6); opacity:.9 } 80%,100%{ transform:scale(1.8); opacity:0 } }
+.tags{ display:flex; gap:6px; }
+.tag{ font:500 11px/1 var(--font-mono); color:var(--muted); padding:6px 8px; border-radius:7px; background:var(--glass-2); border:1px solid var(--stroke); font-variant-numeric:tabular-nums; }
+.tag.rec{ color:var(--fg); }
+.tag.rec::before{ content:""; display:inline-block; width:6px; height:6px; border-radius:50%; background:var(--dim); margin-right:6px; vertical-align:1px; }
+.tag.rec.on::before{ background:var(--bad); box-shadow:0 0 8px var(--bad-glow); }
+
+.station-main{ display:grid; grid-template-columns:88px minmax(0,1fr); gap:12px; }
+.shaft-wrap{ padding:0; overflow:hidden; position:relative; }
+#shaft{ width:100%; height:100%; min-height:268px; display:block; }
+.station-col{ display:flex; flex-direction:column; gap:12px; min-width:0; }
+.floor-panel{ display:grid; grid-template-columns:minmax(0,1fr) auto auto; align-items:center; gap:10px; padding:12px 14px;
+  background:linear-gradient(180deg, rgba(34,211,238,.06), rgba(0,0,0,.35)); border:1px solid rgba(34,211,238,.16); border-radius:var(--r-in);
+  box-shadow:inset 0 0 30px -12px rgba(34,211,238,.35); }
+.fp-meta{ display:flex; flex-direction:column; gap:4px; min-width:0; }
+.fp-lift{ font:500 13px/1.2 var(--font-ui); color:var(--fg); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.fp-num{ font:600 50px/1 var(--font-mono); color:var(--cyan); letter-spacing:-.03em; text-shadow:0 0 18px var(--cyan-glow), 0 0 2px rgba(180,245,255,.9); min-width:2ch; text-align:right; transition:transform .25s ease, opacity .25s ease; }
+.fp-num.tick{ animation:tick .35s ease; }
+@keyframes tick{ 0%{ opacity:.25; transform:translateY(var(--dy,6px)); } 100%{ opacity:1; transform:none; } }
+.chev{ display:flex; flex-direction:column; gap:1px; color:var(--cyan); }
+.chev svg{ width:18px; height:10px; opacity:.13; transition:opacity .2s; }
+.chev.up svg, .chev.down svg{ animation:chev 1.1s linear infinite; filter:drop-shadow(0 0 4px var(--cyan-glow)); }
+.chev.up svg:nth-child(3){ animation-delay:0s } .chev.up svg:nth-child(2){ animation-delay:.18s } .chev.up svg:nth-child(1){ animation-delay:.36s }
+.chev.down{ transform:rotate(180deg); }
+.chev.down svg:nth-child(3){ animation-delay:0s } .chev.down svg:nth-child(2){ animation-delay:.18s } .chev.down svg:nth-child(1){ animation-delay:.36s }
+@keyframes chev{ 0%,100%{ opacity:.15 } 30%{ opacity:1 } }
+.gauge-wrap{ padding:10px 10px 6px; }
+#gauge{ width:100%; height:146px; display:block; }
+
+.telemetry{ display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; }
+@media (max-width:520px){ .telemetry{ grid-template-columns:repeat(2,minmax(0,1fr)); } }
+.inst{ padding:12px 12px 13px; display:flex; flex-direction:column; gap:7px; min-width:0; position:relative; overflow:hidden; }
+.inst::before{ content:""; position:absolute; inset:0 0 auto; height:1px; background:linear-gradient(90deg, transparent, rgba(255,255,255,.12), transparent); }
+.inst-head{ display:flex; justify-content:space-between; align-items:baseline; gap:6px; }
+.inst-head .u{ font:500 10.5px/1 var(--font-mono); color:var(--dim); }
+.inst-val{ font:500 24px/1 var(--font-mono); font-variant-numeric:tabular-nums slashed-zero; letter-spacing:-.02em; color:var(--fg); white-space:nowrap; }
+.inst-val.warn{ color:var(--warn); text-shadow:0 0 12px var(--warn-glow); }
+.meter{ position:relative; height:4px; border-radius:2px; background:rgba(255,255,255,.07); overflow:hidden; }
+.meter.signed::after{ content:""; position:absolute; left:50%; top:-2px; bottom:-2px; width:1px; background:rgba(255,255,255,.22); }
+.meter i{ position:absolute; top:0; bottom:0; left:0; width:0; border-radius:2px; background:var(--cyan); box-shadow:0 0 10px var(--cyan-glow); transition:left .12s linear, width .12s linear, background-color .2s; }
+.meter i.warn{ background:var(--warn); box-shadow:0 0 10px var(--warn-glow); }
+
+.trace{ padding:12px 12px 8px; display:flex; flex-direction:column; gap:8px; }
+.trace-head{ display:flex; justify-content:space-between; gap:8px; align-items:baseline; }
+#strip{ width:100%; height:128px; display:block; }
+
+.controls{ display:flex; gap:10px; flex-wrap:wrap; }
+.btn{ appearance:none; cursor:pointer; border-radius:12px; min-height:48px; padding:0 18px; display:inline-flex; align-items:center; justify-content:center; gap:9px;
+  font:600 14px/1 var(--font-ui); letter-spacing:.01em; border:1px solid var(--stroke-2); background:var(--glass-2); color:var(--fg);
+  transition:transform .12s ease, border-color .15s, background .15s, box-shadow .2s; }
+.btn:hover{ border-color:rgba(255,255,255,.26); background:rgba(255,255,255,.06); }
+.btn:active{ transform:scale(.98); }
+.btn svg{ width:16px; height:16px; flex:none; }
+.btn.primary{ flex:1 1 220px; color:#03181d; border-color:transparent;
+  background:linear-gradient(180deg, #5ee6f8, #16c3dd); box-shadow:0 0 0 1px rgba(34,211,238,.4), 0 10px 30px -8px var(--cyan-glow), inset 0 1px 0 rgba(255,255,255,.45); }
+.btn.primary:hover{ box-shadow:0 0 0 1px rgba(34,211,238,.6), 0 12px 36px -8px var(--cyan-glow), inset 0 1px 0 rgba(255,255,255,.5); }
+.btn.primary.stop{ color:#fff; background:linear-gradient(180deg, #ff7a8b, #e5465b); box-shadow:0 0 0 1px rgba(251,90,110,.5), 0 10px 30px -8px var(--bad-glow), inset 0 1px 0 rgba(255,255,255,.3); }
+.btn.small{ min-height:38px; padding:0 13px; font-size:13px; border-radius:10px; }
+.btn.quiet{ border-color:var(--stroke); background:transparent; color:var(--muted); }
+
+.notice{ border-radius:12px; padding:12px 14px; font-size:13.5px; border:1px solid rgba(245,165,36,.35); background:rgba(245,165,36,.07); color:#fbe3b8; }
+.notice.info{ border-color:var(--stroke); background:var(--glass-2); color:var(--muted); }
+
+.how{ list-style:none; margin:0; padding:0; display:grid; gap:10px; counter-reset:s; }
+.how li{ display:grid; grid-template-columns:24px minmax(0,1fr); gap:10px; font-size:13.5px; color:var(--muted); }
+.how li::before{ counter-increment:s; content:counter(s); width:24px; height:24px; border-radius:7px; display:grid; place-items:center;
+  font:600 11px/1 var(--font-mono); color:var(--cyan); background:var(--cyan-soft); border:1px solid rgba(34,211,238,.22); }
+.how b{ color:var(--fg); font-weight:600; }
+
+details summary{ cursor:pointer; list-style:none; display:flex; align-items:center; gap:10px; }
+details summary::-webkit-details-marker{ display:none; }
+details summary::after{ content:""; margin-left:auto; width:7px; height:7px; border-right:1.5px solid var(--muted); border-bottom:1.5px solid var(--muted); transform:rotate(45deg); transition:transform .2s; }
+details[open] summary::after{ transform:rotate(-135deg); }
+.settings{ border-top:1px solid var(--stroke); padding-top:14px; }
+.fields{ display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:12px; margin-top:14px; }
+.field{ display:flex; flex-direction:column; gap:6px; }
+.field input{ background:var(--well); border:1px solid var(--stroke-2); border-radius:10px; padding:0 12px; min-height:44px; width:100%; font-family:var(--font-mono); font-size:14px; transition:border-color .15s, box-shadow .15s; }
+.field input:focus{ outline:none; border-color:rgba(34,211,238,.6); box-shadow:0 0 0 3px rgba(34,211,238,.15); }
+.field small{ color:var(--dim); font-size:12px; }
+
+/* ---------- reports ---------- */
+.sec-head{ display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; padding-top:6px; }
+.sec-head h2{ font:650 18px/1.2 var(--font-ui); letter-spacing:-.01em; }
+#reports{ display:flex; flex-direction:column; gap:14px; }
+.sheet{ display:flex; flex-direction:column; gap:18px; }
+.sheet-head{ display:grid; grid-template-columns:minmax(0,1fr) auto; gap:16px; align-items:center; }
+.sheet-head h3{ font:650 22px/1.2 var(--font-ui); letter-spacing:-.015em; margin:6px 0 6px; }
+.sheet-head h3 .mono{ font-weight:500; }
+.verdict{ margin:0; color:var(--muted); font-size:14px; max-width:48ch; }
+.pill{ display:inline-flex; align-items:center; font:600 10px/1 var(--font-ui); letter-spacing:.1em; text-transform:uppercase; padding:4px 7px; border-radius:6px; margin-left:8px; vertical-align:1px; }
+.pill.sim{ color:var(--warn); background:rgba(245,165,36,.1); border:1px solid rgba(245,165,36,.3); }
+.ring{ --c:var(--good); --g:var(--good-glow); position:relative; width:96px; height:96px; flex:none; }
+.ring svg{ width:100%; height:100%; transform:rotate(-90deg); }
+.ring .track{ stroke:rgba(255,255,255,.07); }
+.ring .prog{ stroke:var(--c); filter:drop-shadow(0 0 5px var(--g)); transition:stroke-dashoffset .9s cubic-bezier(.2,.8,.2,1); }
+.ring .in{ position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px; }
+.ring .letter{ font:650 32px/1 var(--font-ui); color:var(--c); text-shadow:0 0 16px var(--g); letter-spacing:-.02em; }
+.ring .sc{ font:500 10.5px/1 var(--font-mono); color:var(--muted); }
+.g-A,.g-B{ --c:var(--good); --g:var(--good-glow); } .g-C{ --c:var(--warn); --g:var(--warn-glow); } .g-D,.g-E{ --c:var(--bad); --g:var(--bad-glow); }
+.ring-word{ text-align:center; font:600 10px/1 var(--font-ui); letter-spacing:.12em; text-transform:uppercase; color:var(--c); margin-top:6px; }
+
+.kpis{ display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; }
+@media (max-width:520px){ .kpis{ grid-template-columns:repeat(2,minmax(0,1fr)); } }
+.kpi{ padding:12px; display:flex; flex-direction:column; gap:5px; min-width:0; }
+.kpi b{ font:500 21px/1.1 var(--font-mono); font-variant-numeric:tabular-nums; letter-spacing:-.02em; white-space:nowrap; }
+.kpi b small{ font:500 11px var(--font-mono); color:var(--dim); margin-left:4px; letter-spacing:0; }
+.kpi .sub{ font-size:12px; color:var(--dim); }
+
+.metrics{ display:flex; flex-direction:column; gap:14px; }
+.metric{ display:grid; grid-template-columns:minmax(0,1fr) auto; gap:8px 12px; align-items:center; }
+.metric .m-name{ font-size:13.5px; color:var(--fg); }
+.metric .m-val{ display:flex; align-items:center; gap:8px; font:500 13.5px/1 var(--font-mono); font-variant-numeric:tabular-nums; white-space:nowrap; }
+.metric .m-val .u{ color:var(--dim); font-size:11.5px; }
+.rate{ font:600 9.5px/1 var(--font-ui); letter-spacing:.1em; text-transform:uppercase; padding:4px 6px; border-radius:5px; min-width:40px; text-align:center; }
+.rate.good{ color:var(--good); background:rgba(52,211,153,.1); border:1px solid rgba(52,211,153,.28); }
+.rate.fair{ color:var(--warn); background:rgba(245,165,36,.1); border:1px solid rgba(245,165,36,.3); }
+.rate.poor{ color:var(--bad); background:rgba(251,90,110,.1); border:1px solid rgba(251,90,110,.3); }
+.bar{ grid-column:1 / -1; position:relative; height:6px; display:flex; gap:2px; }
+.bar span{ height:100%; border-radius:3px; }
+.bar .z-good{ background:linear-gradient(90deg, rgba(52,211,153,.12), rgba(52,211,153,.32)); }
+.bar .z-fair{ background:rgba(245,165,36,.3); }
+.bar .z-poor{ background:linear-gradient(90deg, rgba(251,90,110,.32), rgba(251,90,110,.14)); }
+.bar .mark{ position:absolute; top:-4px; width:6px; height:14px; margin-left:-3px; border-radius:3px; background:#fff; box-shadow:0 0 0 2px #0d0f14, 0 0 10px rgba(255,255,255,.6); }
+
+figure{ margin:0; display:flex; flex-direction:column; gap:10px; }
+figure .well{ padding:12px 8px 6px 4px; }
+figcaption{ display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; }
+.legend{ display:flex; gap:12px; flex-wrap:wrap; font-size:11.5px; color:var(--muted); }
+.legend i{ display:inline-block; width:12px; height:8px; border-radius:2px; margin-right:6px; vertical-align:0; }
+canvas.chart{ width:100%; display:block; }
+
+.findings{ list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:10px; }
+.findings li{ display:grid; grid-template-columns:8px minmax(0,1fr); gap:12px; padding:12px 14px; border-radius:12px; background:var(--glass-2); border:1px solid var(--stroke); font-size:13.5px; }
+.findings li::before{ content:""; width:8px; height:8px; border-radius:50%; margin-top:6px; background:var(--good); box-shadow:0 0 8px var(--good-glow); }
+.findings li.fair::before{ background:var(--warn); box-shadow:0 0 8px var(--warn-glow); }
+.findings li.poor::before{ background:var(--bad); box-shadow:0 0 8px var(--bad-glow); }
+.findings b{ font-weight:600; }
+.findings span{ display:block; color:var(--muted); margin-top:2px; }
+.quality{ display:flex; flex-wrap:wrap; gap:6px; }
+.quality span{ font:500 11px/1 var(--font-mono); color:var(--muted); padding:6px 8px; border-radius:7px; background:var(--glass-2); border:1px solid var(--stroke); }
+.quality span.bad{ color:var(--warn); border-color:rgba(245,165,36,.3); }
+.sheet-actions{ display:flex; gap:8px; flex-wrap:wrap; }
+
+.history-item{ display:grid; grid-template-columns:auto minmax(0,1fr) auto; gap:14px; align-items:center; width:100%; text-align:left; cursor:pointer; padding:14px 16px; }
+.history-item:hover{ border-color:var(--stroke-2); }
+.history-item .mini{ width:42px; height:42px; border-radius:12px; display:grid; place-items:center; font:650 20px/1 var(--font-ui); color:var(--c); border:1px solid var(--c); background:rgba(0,0,0,.25); box-shadow:0 0 14px -4px var(--g), inset 0 0 12px -6px var(--g); }
+.history-item .h-main{ display:flex; flex-direction:column; gap:3px; min-width:0; }
+.history-item .h-main b{ font:600 15px/1.2 var(--font-ui); }
+.history-item .h-main span{ font:400 11.5px/1.3 var(--font-mono); color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.history-item .h-open{ color:var(--dim); }
+
+.table-wrap{ overflow-x:auto; border-radius:var(--r-in); border:1px solid var(--stroke); background:var(--well); }
+table{ border-collapse:collapse; width:100%; font-size:12.5px; }
+th,td{ padding:10px 12px; text-align:right; white-space:nowrap; border-bottom:1px solid var(--stroke); }
+th{ font:600 10px/1.2 var(--font-ui); letter-spacing:.1em; text-transform:uppercase; color:var(--muted); background:rgba(255,255,255,.02); }
+th:first-child,td:first-child{ text-align:left; }
+td{ font-family:var(--font-mono); font-variant-numeric:tabular-nums; }
+tr:last-child td{ border-bottom:0; }
+td .gd{ font:650 15px/1 var(--font-ui); }
+.method .body{ display:flex; flex-direction:column; gap:12px; margin-top:14px; font-size:14px; }
+.method p{ margin:0; max-width:65ch; }
+.method ol{ margin:0; padding-left:20px; display:grid; gap:8px; max-width:65ch; color:var(--muted); }
+.method ol b{ color:var(--fg); font-weight:600; }
+.method .muted{ color:var(--muted); }
+.toast{ position:fixed; left:50%; bottom:calc(20px + env(safe-area-inset-bottom,0px)); transform:translateX(-50%) translateY(16px); z-index:30;
+  padding:11px 16px; border-radius:12px; font:500 13.5px/1.35 var(--font-ui); color:var(--fg); max-width:calc(100% - 32px);
+  background:rgba(16,19,25,.85); border:1px solid rgba(34,211,238,.3); box-shadow:0 12px 40px -10px rgba(0,0,0,.8), 0 0 24px -10px var(--cyan-glow);
+  -webkit-backdrop-filter:blur(14px); backdrop-filter:blur(14px); opacity:0; pointer-events:none; transition:opacity .2s, transform .25s cubic-bezier(.2,.8,.2,1); }
+.toast.show{ opacity:1; transform:translateX(-50%) translateY(0); }
+footer{ color:var(--dim); font-size:12px; text-align:center; }
+@media (prefers-reduced-motion: reduce){ *,*::before,*::after{ animation:none !important; transition:none !important; } }
+</style>
+</head>
+<body>
+<div class="field-bg" aria-hidden="true"></div>
+<div class="wrap">
+  <header class="top">
+    <div class="mark" aria-hidden="true">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="3" width="16" height="18" rx="2.5"/><path d="M12 3v18"/><path d="m7.5 9 1.5-2 1.5 2M13.5 15l1.5 2 1.5-2"/></svg>
+    </div>
+    <div>
+      <h1>Elevator Ride Inspector</h1>
+      <p>Lift ride quality from your phone's accelerometer.</p>
+    </div>
+    <span class="ver">ISO 18738-style</span>
+  </header>
+
+  <section class="card station" aria-label="Live measurement">
+    <div class="station-bar">
+      <div class="status" id="chip" data-s="off"><span class="dot"></span><span id="chipText">Standby</span></div>
+      <div class="tags"><span class="tag" id="rate">— Hz</span><span class="tag rec" id="clock">00:00</span></div>
+    </div>
+
+    <div class="station-main">
+      <div class="well shaft-wrap"><canvas id="shaft" aria-label="Car position in the shaft"></canvas></div>
+      <div class="station-col">
+        <div class="floor-panel" aria-live="polite">
+          <div class="fp-meta"><span class="eyebrow">Floor · estimated</span><span class="fp-lift" id="liftNameLed">Lift</span></div>
+          <div class="chev" id="chev" aria-hidden="true">
+            <svg viewBox="0 0 18 10"><path d="M2 8 9 2l7 6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <svg viewBox="0 0 18 10"><path d="M2 8 9 2l7 6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <svg viewBox="0 0 18 10"><path d="M2 8 9 2l7 6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </div>
+          <div class="fp-num" id="floorLed">G</div>
+        </div>
+        <div class="well gauge-wrap"><canvas id="gauge" aria-label="Vertical acceleration gauge"></canvas></div>
+      </div>
+    </div>
+
+    <div class="telemetry">
+      <div class="well inst" id="iSpeed"><div class="inst-head"><span class="eyebrow">Speed</span><span class="u">m/s</span></div><div class="inst-val">+0.00</div><div class="meter signed"><i></i></div></div>
+      <div class="well inst" id="iHeight"><div class="inst-head"><span class="eyebrow">Height</span><span class="u">m</span></div><div class="inst-val">+0.0</div><div class="meter signed"><i></i></div></div>
+      <div class="well inst" id="iJerk"><div class="inst-head"><span class="eyebrow">Jerk</span><span class="u">m/s³</span></div><div class="inst-val">+0.00</div><div class="meter signed"><i></i></div></div>
+      <div class="well inst" id="iPeak"><div class="inst-head"><span class="eyebrow">Trip peak</span><span class="u">m/s²</span></div><div class="inst-val">0.00</div><div class="meter"><i></i></div></div>
+    </div>
+
+    <div class="well trace">
+      <div class="trace-head"><span class="eyebrow">Vertical acceleration · 20 s</span><span class="eyebrow" style="color:var(--dim)">m/s²</span></div>
+      <canvas id="strip" aria-label="Live vertical acceleration trace"></canvas>
+    </div>
+
+    <div class="controls">
+      <button class="btn primary" id="btnStart" type="button"><svg viewBox="0 0 16 16" fill="currentColor"><path d="M4 2.5v11l9-5.5z"/></svg><span>Start inspection</span></button>
+      <button class="btn" id="btnDemo" type="button">Replay sample ride</button>
+    </div>
+    <div class="notice" id="sensorMsg" hidden></div>
+
+    <ol class="how">
+      <li><span><b>Lay the phone flat on the car floor</b>, near the centre, screen up.</span></li>
+      <li><span><b>Step back and stand still.</b> It calibrates once the phone is still, then waits for movement.</span></li>
+      <li><span><b>Ride to any floor.</b> Each trip is detected and graded when the car stops. Ride as many trips as you like.</span></li>
+    </ol>
+
+    <details class="settings">
+      <summary class="eyebrow">Lift settings</summary>
+      <div class="fields">
+        <label class="field"><span class="eyebrow">Lift name</span><input id="setLift" type="text" placeholder="Block C · Lift 2" maxlength="40" autocomplete="off"></label>
+        <label class="field"><span class="eyebrow">Floor-to-floor height · m</span><input id="setFloorH" type="number" min="2" max="8" step="0.05" value="3.00" inputmode="decimal"><small>Used to count floors. Typical 3.0–3.6 m.</small></label>
+        <label class="field"><span class="eyebrow">Starting floor</span><input id="setStart" type="number" min="-9" max="200" step="1" value="0" inputmode="numeric"><small>0 = ground (G), −1 = B1.</small></label>
+      </div>
+    </details>
+  </section>
+
+  <section aria-labelledby="repTitle" style="display:flex;flex-direction:column;gap:14px">
+    <div class="sec-head">
+      <h2 id="repTitle">Ride reports</h2>
+      <div class="controls" id="repActions">
+        <button class="btn small" id="btnCsv" type="button">Export CSV</button>
+        <button class="btn small" id="btnCopy" type="button">Copy summary</button>
+        <button class="btn small quiet" id="btnClear" type="button">Clear rides</button>
+      </div>
+    </div>
+    <div id="reports"></div>
+    <div id="compareBox" hidden style="display:flex;flex-direction:column;gap:10px">
+      <span class="eyebrow">All rides compared</span>
+      <div class="table-wrap"><table id="compare"></table></div>
+    </div>
+  </section>
+
+  <details class="card method">
+    <summary class="eyebrow">How it measures, and the limits used</summary>
+    <div class="body">
+      <p>The accelerometer reads the force on the car floor about 60 times a second. The app turns that into the lift's vertical motion in five steps:</p>
+      <ol>
+        <li><b>Find "up".</b> While the phone is still, the average reading is gravity. Projecting every sample onto it gives vertical acceleration, however the phone lies. The rest is sideways motion.</li>
+        <li><b>Remove sensor offset.</b> The still periods before and after each trip give the sensor's offset, which is subtracted along the trip.</li>
+        <li><b>Filter with zero phase lag.</b> Motion: 3 Hz low-pass. Jerk: derivative of a 2 Hz low-pass. Vibration: 1–25 Hz band (less if the phone samples slower). Filters run forward and backward so peaks keep their timing.</li>
+        <li><b>Integrate with zero-velocity correction.</b> Acceleration is integrated to speed and height. The car is stopped at both ends, so leftover speed is drift and is removed. This keeps travel within a few percent.</li>
+        <li><b>Score the ride</b> in the style of ISO 18738-1: peak start acceleration and stop deceleration, peak jerk, and A95 peak-to-peak vibration (the level 95% of 0.5 s windows stay under) in milli-g, measured at steady speed where the lift reaches it.</li>
+      </ol>
+      <div class="table-wrap"><table id="limitsTable"></table></div>
+      <p class="muted">Limits are typical passenger-lift comfort guidance; ISO 18738 defines how to measure, not pass/fail values. Phone sensors have a noise floor of a few milli-g, shown under each report. This is a screening tool for spotting a lift that needs attention, not a certified ride-quality analyser.</p>
+    </div>
+  </details>
+
+  <footer>Chrome on Android · Safari on iPhone · needs an https link · data stays on this phone</footer>
+</div>
+<div class="toast" id="toast" role="status"></div>
+
+<script>
+/*CORE-START*/
+const Core = (() => {
+  const G0 = 9.80665, TAU = Math.PI * 2;
+  const clamp = (x, a, b) => Math.min(b, Math.max(a, x));
+
+  // ---------- filters ----------
+  function coeffs(type, fc, fs) {
+    const w0 = TAU * fc / fs, cw = Math.cos(w0), sw = Math.sin(w0), al = sw / (2 * Math.SQRT1_2);
+    const a0 = 1 + al, a1 = -2 * cw, a2 = 1 - al;
+    let b0, b1, b2;
+    if (type === 'lp') { b0 = (1 - cw) / 2; b1 = 1 - cw; b2 = (1 - cw) / 2; }
+    else { b0 = (1 + cw) / 2; b1 = -(1 + cw); b2 = (1 + cw) / 2; }
+    return [b0 / a0, b1 / a0, b2 / a0, a1 / a0, a2 / a0];
+  }
+  function runBiquad(x, c) {
+    const [b0, b1, b2, a1, a2] = c, n = x.length, y = new Float64Array(n);
+    const ss = (b0 + b1 + b2) / (1 + a1 + a2) * x[0];
+    let x1 = x[0], x2 = x[0], y1 = ss, y2 = ss;
+    for (let i = 0; i < n; i++) {
+      const v = b0 * x[i] + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2;
+      x2 = x1; x1 = x[i]; y2 = y1; y1 = v; y[i] = v;
+    }
+    return y;
+  }
+  function filtfilt(x, c, pad) {
+    const n = x.length;
+    if (n < 4) return Float64Array.from(x);
+    pad = Math.max(1, Math.min(n - 1, pad | 0));
+    const e = new Float64Array(n + 2 * pad);
+    for (let i = 0; i < pad; i++) e[i] = 2 * x[0] - x[pad - i];
+    for (let i = 0; i < n; i++) e[pad + i] = x[i];
+    for (let i = 0; i < pad; i++) e[pad + n + i] = 2 * x[n - 1] - x[n - 2 - i];
+    let y = runBiquad(e, c); y.reverse(); y = runBiquad(y, c); y.reverse();
+    return y.slice(pad, pad + n);
+  }
+  const lowpass = (x, fc, fs) => filtfilt(x, coeffs('lp', fc, fs), Math.round(3 * fs / fc));
+  const highpass = (x, fc, fs) => filtfilt(x, coeffs('hp', fc, fs), Math.round(3 * fs / fc));
+
+  // ---------- helpers ----------
+  function resample(t, cols, fs) {
+    const t0 = t[0], T = t[t.length - 1] - t0, n = Math.max(2, Math.floor(T * fs) + 1);
+    const out = cols.map(() => new Float64Array(n));
+    let j = 0;
+    for (let i = 0; i < n; i++) {
+      const ti = t0 + i / fs;
+      while (j < t.length - 2 && t[j + 1] < ti) j++;
+      const dt = t[j + 1] - t[j], f = dt > 0 ? clamp((ti - t[j]) / dt, 0, 1) : 0;
+      for (let k = 0; k < cols.length; k++) out[k][i] = cols[k][j] + (cols[k][j + 1] - cols[k][j]) * f;
+    }
+    return { n, out };
+  }
+  function mean(a, i0 = 0, i1 = a.length) { let s = 0; for (let i = i0; i < i1; i++) s += a[i]; return s / Math.max(1, i1 - i0); }
+  function percentile(arr, p) {
+    if (!arr.length) return NaN;
+    const s = Array.from(arr).sort((a, b) => a - b), k = (s.length - 1) * p, lo = Math.floor(k), hi = Math.ceil(k);
+    return s[lo] + (s[hi] - s[lo]) * (k - lo);
+  }
+  function cumtrapz(a, fs) { const y = new Float64Array(a.length); for (let i = 1; i < a.length; i++) y[i] = y[i - 1] + (a[i] + a[i - 1]) / (2 * fs); return y; }
+  function pkpk(x, fs, i0, i1, win = 0.5, step = 0.1) {
+    const w = Math.max(2, Math.round(win * fs)), st = Math.max(1, Math.round(step * fs)), out = [];
+    for (let s = i0; s + w <= i1; s += st) {
+      let mn = Infinity, mx = -Infinity;
+      for (let i = s; i < s + w; i++) { const v = x[i]; if (v < mn) mn = v; if (v > mx) mx = v; }
+      out.push(mx - mn);
+    }
+    return out;
+  }
+  function spectrum(x, fs) {
+    const N = x.length; let n = 1; while (n < N) n <<= 1;
+    const re = new Float64Array(n), im = new Float64Array(n), m = mean(x); let wsum = 0;
+    for (let i = 0; i < N; i++) { const w = 0.5 - 0.5 * Math.cos(TAU * i / (N - 1)); wsum += w; re[i] = (x[i] - m) * w; }
+    for (let i = 1, j = 0; i < n; i++) {
+      let bit = n >> 1; for (; j & bit; bit >>= 1) j ^= bit; j ^= bit;
+      if (i < j) { let t = re[i]; re[i] = re[j]; re[j] = t; t = im[i]; im[i] = im[j]; im[j] = t; }
+    }
+    for (let len = 2; len <= n; len <<= 1) {
+      const ang = -TAU / len, wr = Math.cos(ang), wi = Math.sin(ang), h = len >> 1;
+      for (let i = 0; i < n; i += len) {
+        let cr = 1, ci = 0;
+        for (let k = 0; k < h; k++) {
+          const a = i + k, b = a + h, tr = re[b] * cr - im[b] * ci, ti = re[b] * ci + im[b] * cr;
+          re[b] = re[a] - tr; im[b] = im[a] - ti; re[a] += tr; im[a] += ti;
+          const nc = cr * wr - ci * wi; ci = cr * wi + ci * wr; cr = nc;
+        }
+      }
+    }
+    const f = [], amp = [];
+    for (let k = 0; k <= n / 2; k++) { f.push(k * fs / n); amp.push(2 * Math.hypot(re[k], im[k]) / wsum); }
+    return { f, amp };
+  }
+  const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  const norm = a => Math.hypot(a[0], a[1], a[2]);
+  const scale = (a, k) => [a[0] * k, a[1] * k, a[2] * k];
+  const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+  const mg = x => x / G0 * 1000;
+  function argmax(arr, i0, i1, f = v => v) { let bi = i0, bv = -Infinity; for (let i = i0; i <= i1; i++) { const v = f(arr[i]); if (v > bv) { bv = v; bi = i; } } return [bi, bv]; }
+
+  // ---------- comfort limits ----------
+  // good/fair: rating bands. s100/s0: score 100 at or below s100, 0 at or above s0.
+  const LIMITS = {
+    accel: { name: 'Peak acceleration', unit: 'm/s²', good: 1.2, fair: 1.5, s100: 1.0, s0: 2.0, w: 0.2 },
+    jerk:  { name: 'Peak jerk', unit: 'm/s³', good: 1.5, fair: 2.2, s100: 1.0, s0: 3.0, w: 0.3 },
+    vibV:  { name: 'Vertical vibration A95', unit: 'mg', good: 15, fair: 25, s100: 10, s0: 35, w: 0.3 },
+    vibH:  { name: 'Sideways vibration A95', unit: 'mg', good: 15, fair: 25, s100: 10, s0: 35, w: 0.2 },
+  };
+  const rate = (k, v) => v <= LIMITS[k].good ? 'good' : v <= LIMITS[k].fair ? 'fair' : 'poor';
+  const sub = (k, v) => { const L = LIMITS[k]; return 100 * clamp((L.s0 - v) / (L.s0 - L.s100), 0, 1); };
+  function score(m) {
+    const vals = { accel: Math.max(m.peakAccel, m.peakDecel), jerk: Math.max(m.startJerk, m.stopJerk), vibV: m.vibV, vibH: m.vibH };
+    let s = 0; const ratings = {};
+    for (const k in LIMITS) { s += LIMITS[k].w * sub(k, vals[k]); ratings[k] = rate(k, vals[k]); }
+    s = Math.round(s);
+    const grade = s >= 85 ? 'A' : s >= 70 ? 'B' : s >= 55 ? 'C' : s >= 40 ? 'D' : 'E';
+    const word = { A: 'Excellent', B: 'Good', C: 'Acceptable', D: 'Poor', E: 'Service' }[grade];
+    return { score: s, grade, word, ratings, vals };
+  }
+  function findings(m) {
+    const out = [];
+    const r = k => score(m).ratings[k];
+    const harsher = m.stopJerk > m.startJerk ? 'stop' : 'start';
+    if (r('jerk') !== 'good') {
+      const j = Math.max(m.startJerk, m.stopJerk);
+      out.push({ level: r('jerk'), title: `Jerky ${harsher} (${j.toFixed(2)} m/s³).`,
+        cause: harsher === 'stop' ? 'Possible causes: deceleration profile too steep, brake applied before the car fully stops, or levelling hunting.'
+                                  : 'Possible causes: brake lifting late or early against the motor, or a steep acceleration ramp in the drive settings.' });
+    }
+    if (r('accel') !== 'good') {
+      const a = Math.max(m.peakAccel, m.peakDecel), which = m.peakDecel > m.peakAccel ? 'braking' : 'pull-away';
+      out.push({ level: r('accel'), title: `Strong ${which} (${a.toFixed(2)} m/s²).`, cause: 'Passengers standing may lose balance. Check the drive acceleration and deceleration settings.' });
+    }
+    if (r('vibV') !== 'good') {
+      const f = m.domF, hint = !f ? '' : f < 5 ? 'Low-frequency bounce like this often comes from uneven rope tension or worn car isolation pads.' :
+        f < 15 ? 'Vibration in this range often comes from the machine: motor, gearbox or drive tuning.' : 'Higher-frequency buzz often comes from roller guides, fans or loose panels.';
+      out.push({ level: r('vibV'), title: `Vertical vibration ${m.vibV.toFixed(0)} mg${f ? `, strongest at ${f.toFixed(1)} Hz` : ''}.`, cause: hint });
+    }
+    if (r('vibH') !== 'good') {
+      out.push({ level: r('vibH'), title: `Sideways shake ${m.vibH.toFixed(0)} mg.`, cause: 'Often points to guide rail joints out of line or worn guide shoes or rollers.' });
+    }
+    if (!out.length) out.push({ level: 'good', title: 'Smooth, well-controlled ride.', cause: 'All four measures are inside typical comfort limits. No action suggested.' });
+    if (!m.hasCruise) out.push({ level: 'fair', title: 'Short trip: the lift never reached steady speed.', cause: 'Vibration was measured over the whole trip. Ride 3 or more floors for a full check.' });
+    return out;
+  }
+  function verdict(m, sc) {
+    const f = findings(m)[0];
+    if (sc.grade === 'A') return 'Smooth start, steady travel and a clean stop.';
+    if (f && f.level !== 'good') return f.title.replace(/\.$/, '') + '.';
+    return 'Ride is within comfort limits.';
+  }
+
+  // ---------- core analysis of one trip ----------
+  // samples: [{t (s), ax, ay, az (m/s², including gravity), rot (deg/s)}]
+  // preEnd: time the car was still until; postStart: time the car was still again from.
+  function analyzeRide(samples, preEnd, postStart, opts = {}) {
+    const floorH = opts.floorH || 3;
+    const N = samples.length;
+    if (N < 30) return { rejected: true, reason: 'short', message: 'Too few samples.' };
+    const t = samples.map(s => s.t);
+    const srcRate = (N - 1) / (t[N - 1] - t[0]);
+    if (!(srcRate >= 15)) return { rejected: true, reason: 'rate', message: `Sensor rate ${srcRate.toFixed(0)} Hz is too low.` };
+    const fs = clamp(Math.round(srcRate), 20, 200);
+    const { n, out } = resample(t, [samples.map(s => s.ax), samples.map(s => s.ay), samples.map(s => s.az), samples.map(s => s.rot || 0)], fs);
+    const [ax, ay, az, rot] = out;
+    const iPre = Math.floor((preEnd - t[0]) * fs), iPost = Math.ceil((postStart - t[0]) * fs);
+    if (iPre < 0.4 * fs || n - iPost < 0.4 * fs || iPost - iPre < fs) return { rejected: true, reason: 'still', message: 'Not enough still time before or after the trip.' };
+
+    const gPre = [mean(ax, 0, iPre), mean(ay, 0, iPre), mean(az, 0, iPre)];
+    const gPost = [mean(ax, iPost, n), mean(ay, iPost, n), mean(az, iPost, n)];
+    const gh = scale(gPre, 1 / norm(gPre));
+    const tiltDeg = Math.acos(clamp(dot(gh, scale(gPost, 1 / norm(gPost))), -1, 1)) * 180 / Math.PI;
+
+    // horizontal basis
+    const ref = Math.abs(gh[0]) < 0.6 ? [1, 0, 0] : [0, 1, 0];
+    const e1 = (() => { const c = cross(gh, ref); return scale(c, 1 / norm(c)); })();
+    const e2 = cross(gh, e1);
+
+    const aRaw = new Float64Array(n), hx = new Float64Array(n), hy = new Float64Array(n);
+    for (let i = 0; i < n; i++) { const a = [ax[i], ay[i], az[i]]; aRaw[i] = dot(a, gh); hx[i] = dot(a, e1); hy[i] = dot(a, e2); }
+    const bPre = mean(aRaw, 0, iPre), bPost = mean(aRaw, iPost, n), cPre = iPre / 2, cPost = (iPost + n) / 2;
+    const aUp = new Float64Array(n);
+    for (let i = 0; i < n; i++) aUp[i] = aRaw[i] - (bPre + (bPost - bPre) * clamp((i - cPre) / (cPost - cPre), 0, 1));
+
+    const aM = lowpass(aUp, 3, fs), aJ = lowpass(aUp, 2, fs);
+    const v = cumtrapz(aM, fs);
+    const v0 = mean(v, 0, iPre);
+    for (let i = 0; i < n; i++) v[i] -= v0;
+    const resid = mean(v, iPost, n), span = iPost - iPre, slope = resid / (span / fs);
+    for (let i = 0; i < n; i++) {
+      const f = clamp((i - iPre) / span, 0, 1);
+      v[i] -= resid * f;
+      if (i >= iPre && i < iPost) aM[i] -= slope;
+    }
+    const z = cumtrapz(v, fs);
+    const z0 = mean(z, 0, iPre);
+    for (let i = 0; i < n; i++) z[i] -= z0;
+    const travel = mean(z, iPost, n);
+
+    let vmax = 0, iV = 0;
+    for (let i = 0; i < n; i++) { const a = Math.abs(v[i]); if (a > vmax) { vmax = a; iV = i; } }
+    if (Math.abs(travel) < 0.4 || vmax < 0.12) return { rejected: true, reason: 'bump', message: 'Small bump ignored (no real trip).' };
+    const dir = Math.sign(travel);
+
+    let i0 = 0, i1 = n - 1, ic0 = iV, ic1 = iV;
+    for (let i = 0; i < n; i++) if (Math.abs(v[i]) > 0.05 * vmax) { i0 = i; break; }
+    for (let i = n - 1; i >= 0; i--) if (Math.abs(v[i]) > 0.05 * vmax) { i1 = i; break; }
+    for (let i = i0; i <= i1; i++) if (Math.abs(v[i]) >= 0.95 * vmax) { ic0 = i; break; }
+    for (let i = i1; i >= i0; i--) if (Math.abs(v[i]) >= 0.95 * vmax) { ic1 = i; break; }
+    const cruiseTime = (ic1 - ic0) / fs, hasCruise = cruiseTime >= 1.5;
+    const accEnd = hasCruise ? ic0 : iV, decStart = hasCruise ? ic1 : iV;
+    const lo = Math.max(1, i0 - fs), hi = Math.min(n - 2, i1 + fs);
+    const mid = hasCruise ? Math.round((ic0 + ic1) / 2) : iV;
+
+    const [iA, peakAccel] = argmax(aM, lo, accEnd, x => dir * x);
+    const [iD, peakDecel] = argmax(aM, decStart, hi, x => -dir * x);
+    const jerk = new Float64Array(n);
+    for (let i = 1; i < n - 1; i++) jerk[i] = (aJ[i + 1] - aJ[i - 1]) * fs / 2;
+    jerk[0] = jerk[1]; jerk[n - 1] = jerk[n - 2];
+    const [iJ1, startJerk] = argmax(jerk, lo, mid, Math.abs);
+    const [iJ2, stopJerk] = argmax(jerk, mid, hi, Math.abs);
+
+    // vibration
+    const fcV = Math.min(25, 0.4 * fs);
+    const band = x => lowpass(highpass(x, 1, fs), fcV, fs);
+    const vz = band(aUp), vx = band(hx), vy = band(hy);
+    const pad = Math.round(0.5 * fs);
+    const r0 = hasCruise ? ic0 + pad : i0, r1 = hasCruise ? ic1 - pad : i1;
+    const ppV = pkpk(vz, fs, r0, r1), ppX = pkpk(vx, fs, r0, r1), ppY = pkpk(vy, fs, r0, r1);
+    const vibV = mg(percentile(ppV, 0.95)), vibVmax = mg(Math.max(...ppV, 0));
+    const hxA = mg(percentile(ppX, 0.95)), hyA = mg(percentile(ppY, 0.95));
+    const vibH = Math.max(hxA, hyA), vh = hxA >= hyA ? vx : vy;
+    const vibHmax = mg(Math.max(...(hxA >= hyA ? ppX : ppY), 0));
+    const ppN = iPre >= 0.6 * fs ? pkpk(vz, fs, Math.round(0.1 * fs), iPre) : [];
+    const noise = ppN.length ? mg(percentile(ppN, 0.95)) : null;
+
+    let spec = null, domF = null, domA = null;
+    if (r1 - r0 >= fs) {
+      const sp = spectrum(Array.from(vz.slice(r0, r1)), fs), fmax = Math.min(25, fs / 2);
+      const f = [], a = [];
+      for (let k = 0; k < sp.f.length; k++) if (sp.f[k] <= fmax) { f.push(sp.f[k]); a.push(mg(sp.amp[k])); }
+      let bi = -1, bv = 0;
+      for (let k = 0; k < f.length; k++) if (f[k] >= 1 && a[k] > bv) { bv = a[k]; bi = k; }
+      if (bi >= 0) { domF = f[bi]; domA = bv; }
+      const step = Math.max(1, Math.ceil(f.length / 160));
+      spec = { f: f.filter((_, k) => k % step === 0), a: a.filter((_, k) => k % step === 0) };
+    }
+    let rotMax = 0; for (let i = i0; i <= i1; i++) rotMax = Math.max(rotMax, rot[i]);
+
+    const m = {
+      fs, srcRate, travel, dir, vmax, tripTime: (i1 - i0) / fs, floors: Math.abs(travel) / floorH,
+      peakAccel, peakDecel, startJerk, stopJerk, vibV, vibVmax, vibH, vibHmax, noise, domF, domA,
+      hasCruise, cruiseTime: hasCruise ? cruiseTime : 0, tiltDeg, driftRatio: Math.abs(resid) / vmax, rotMax,
+    };
+
+    // series for plotting: t = 0 at motion start, ~25 Hz
+    const s0 = Math.max(0, i0 - Math.round(1.5 * fs)), s1 = Math.min(n - 1, i1 + Math.round(1.5 * fs));
+    const dec = Math.max(1, Math.round(fs / 25)), T = i => +((i - i0) / fs).toFixed(3);
+    const ser = { t: [], a: [], j: [], v: [], z: [] };
+    for (let i = s0; i <= s1; i += dec) { ser.t.push(T(i)); ser.a.push(+aM[i].toFixed(4)); ser.j.push(+jerk[i].toFixed(4)); ser.v.push(+v[i].toFixed(4)); ser.z.push(+z[i].toFixed(3)); }
+    const vib = { t: [], z: [], h: [] }, decV = Math.max(1, Math.round(fs / 50));
+    for (let i = r0; i <= r1; i += decV) { vib.t.push(T(i)); vib.z.push(+mg(vz[i]).toFixed(2)); vib.h.push(+mg(vh[i]).toFixed(2)); }
+    const marks = {
+      accel: { t: T(iA), y: aM[iA] }, decel: { t: T(iD), y: aM[iD] },
+      jStart: { t: T(iJ1), y: jerk[iJ1] }, jStop: { t: T(iJ2), y: jerk[iJ2] },
+      vmax: { t: T(iV), y: v[iV] },
+      phases: { acc: [T(i0), T(accEnd)], cruise: hasCruise ? [T(ic0), T(ic1)] : null, dec: [T(decStart), T(i1)] },
+    };
+    return { rejected: false, metrics: m, series: ser, vib, spec, marks };
+  }
+
+  // ---------- live ride detector ----------
+  class Detector {
+    constructor(onEvent) { this.onEvent = onEvent || (() => {}); this.reset(); }
+    reset() {
+      this.buf = []; this.state = 'calib'; this.g = null; this.gh = null; this.gm = G0;
+      this.lp = 0; this.lastT = null; this.onSince = null; this.v = 0; this.z = 0; this.calibAt = null;
+    }
+    emit(type, data) { this.onEvent(type, data || {}); }
+    push(s) {
+      const b = this.buf; b.push(s);
+      const dt = this.lastT == null ? 0 : clamp(s.t - this.lastT, 0, 0.1);
+      this.lastT = s.t;
+      if (this.state !== 'ride') { const from = s.t - 4; let k = 0; while (k < b.length && b[k].t < from) k++; if (k) b.splice(0, k); }
+
+      if (this.state === 'calib') {
+        const w = b.filter(x => x.t >= s.t - 1.5);
+        if (w.length > 10 && s.t - w[0].t >= 1.4) {
+          let ok = true; const m = [0, 0, 0];
+          for (const x of w) { m[0] += x.ax; m[1] += x.ay; m[2] += x.az; if ((x.rot || 0) > 12) ok = false; }
+          for (let k = 0; k < 3; k++) m[k] /= w.length;
+          let sd = 0; for (const x of w) sd = Math.max(sd, Math.abs(x.ax - m[0]), Math.abs(x.ay - m[1]), Math.abs(x.az - m[2]));
+          if (ok && sd < 0.25 && norm(m) > 7 && norm(m) < 12.5) {
+            this.g = m; this.gm = norm(m); this.gh = scale(m, 1 / this.gm); this.state = 'idle'; this.lp = 0; this.calibAt = s.t;
+            this.emit('ready');
+          }
+        }
+        return;
+      }
+      const a = [s.ax, s.ay, s.az];
+      const aUp = dot(a, this.gh) - this.gm;
+      this.lp += (1 - Math.exp(-TAU * 3 * dt)) * (aUp - this.lp);
+
+      if ((s.rot || 0) > 40) {
+        if (this.state === 'ride') this.moved = true;
+        else { this.state = 'calib'; this.emit('moved'); return; }
+      }
+      if (this.state === 'idle') {
+        if (Math.abs(this.lp) < 0.04 && (s.rot || 0) < 5) {
+          const k = 1 - Math.exp(-dt / 4);
+          for (let i = 0; i < 3; i++) this.g[i] += k * (a[i] - this.g[i]);
+          this.gm = norm(this.g); this.gh = scale(this.g, 1 / this.gm);
+        }
+        if (Math.abs(this.lp) > 0.12) {
+          if (this.onSince == null) this.onSince = s.t;
+          if (s.t - this.onSince >= 0.2) this.startRide(s);
+        } else this.onSince = null;
+        return;
+      }
+      // in ride
+      this.v += this.lp * dt; this.z += this.v * dt;
+      this.vpeak = Math.max(this.vpeak, Math.abs(this.v));
+      const d = Math.max(0, Math.abs(this.lp) - 0.05) * dt;
+      if (Math.sign(this.lp) === this.firstSign) this.areaFirst += d; else this.areaOpp += d;
+      if (Math.abs(this.lp) > 0.06) this.lastActive = s.t;
+      const quiet = s.t - this.lastActive;
+      const stopped = (this.areaFirst > 0.05 && this.areaOpp >= 0.5 * this.areaFirst) || Math.abs(this.v) < 0.3 * this.vpeak;
+      if ((quiet >= 1.8 && stopped) || quiet >= 40 || s.t - this.rideT0 > 240) this.endRide(s);
+    }
+    startRide(s) {
+      const tOn = this.onSince;
+      this.rideT0 = Math.max(this.buf[0].t, tOn - 1.7);
+      this.preEnd = Math.max(this.rideT0 + 0.45, tOn - 0.3);
+      this.v = this.lp * 0.2; this.z = 0; this.vpeak = 0; this.firstSign = Math.sign(this.lp);
+      this.areaFirst = 0; this.areaOpp = 0; this.lastActive = s.t; this.moved = false; this.state = 'ride';
+      this.emit('rideStart', { dir: this.firstSign });
+    }
+    endRide(s) {
+      const samples = this.buf.filter(x => x.t >= this.rideT0);
+      const ev = { samples, preEnd: this.preEnd, postStart: Math.min(this.lastActive + 0.4, s.t - 0.5), moved: this.moved, liveZ: this.z };
+      this.state = 'idle'; this.onSince = null; this.v = 0; this.z = 0; this.lp = 0;
+      const from = s.t - 4; this.buf = this.buf.filter(x => x.t >= from);
+      this.emit('rideEnd', ev);
+    }
+  }
+
+  // ---------- synthetic ride (for the sample replay and for testing) ----------
+  function mulberry32(a) { return () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+  function makeRide(o = {}) {
+    const p = Object.assign({ fs: 60, travel: 12, vmax: 1.6, amax: 0.9, jStart: 1.1, jStop: 1.1, dir: 1, pre: 3.5, post: 3,
+      noise: 0.012, vibF: 12, vibA: 0.04, swayF: 3.2, swayA: 0.03, tiltDeg: 4, rollDeg: 0, flip: false, jitter: 0.2, biasDrift: 0, bias: 0, seed: 7, t0: 0 }, o);
+    const rnd = mulberry32(p.seed), gauss = () => { let u = 0, v = 0; while (!u) u = rnd(); v = rnd(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(TAU * v); };
+    const phase = (vm, j) => { let a = p.amax, Tj = a / j, Ta = vm / a - Tj; if (Ta < 0) { a = Math.sqrt(vm * j); Tj = a / j; Ta = 0; } return { a, Tj, Ta, D: vm * (2 * Tj + Ta) / 2 }; };
+    let vm = p.vmax, A, D;
+    for (let k = 0; k < 200; k++) { A = phase(vm, p.jStart); D = phase(vm, p.jStop); if (A.D + D.D <= p.travel) break; vm *= 0.97; }
+    const Tc = (p.travel - A.D - D.D) / vm;
+    const segs = [[p.jStart, A.Tj], [0, A.Ta], [-p.jStart, A.Tj], [0, Tc], [-p.jStop, D.Tj], [0, D.Ta], [p.jStop, D.Tj]];
+    const dt = 0.0005, prof = { t: [], a: [], v: [] };
+    let a = 0, v = 0, z = 0, tt = 0;
+    for (const [j, T] of segs) { const steps = Math.round(T / dt); for (let k = 0; k < steps; k++) { a += j * dt; v += a * dt; z += v * dt; tt += dt; prof.t.push(tt); prof.a.push(a); prof.v.push(v); } }
+    const Tm = tt, total = p.pre + Tm + p.post;
+    const rx = p.tiltDeg * Math.PI / 180, ry = p.rollDeg * Math.PI / 180;
+    const cx = Math.cos(rx), sx = Math.sin(rx), cy = Math.cos(ry), sy = Math.sin(ry);
+    const samples = []; let t = 0, ph = rnd() * TAU;
+    while (t < total) {
+      const tm = t - p.pre; let am = 0, vv = 0;
+      if (tm > 0 && tm < Tm) { const k = Math.min(prof.t.length - 1, Math.floor(tm / dt)); am = prof.a[k]; vv = prof.v[k]; }
+      const s = vm > 0 ? vv / vm : 0;
+      const fz = G0 + p.dir * am + p.vibA * s * Math.sin(TAU * p.vibF * t) + p.noise * gauss();
+      const fx = p.swayA * s * Math.sin(TAU * p.swayF * t + ph) + p.noise * gauss();
+      const fy = 0.6 * p.swayA * s * Math.sin(TAU * p.swayF * 1.13 * t) + p.noise * gauss();
+      // rotate world -> phone (tilt about x then roll about y)
+      let X = fx, Y = cx * fy + sx * fz, Z = -sx * fy + cx * fz;
+      const X2 = cy * X - sy * Z, Z2 = sy * X + cy * Z; X = X2; Z = Z2 + p.bias + p.biasDrift * t;
+      const k = p.flip ? -1 : 1;
+      samples.push({ t: p.t0 + t, ax: k * X, ay: k * Y, az: k * Z, rot: Math.abs(0.3 * gauss()) });
+      t += (1 / p.fs) * (1 + p.jitter * (rnd() - 0.5));
+    }
+    return { samples, preEnd: p.t0 + p.pre - 0.3, postStart: p.t0 + p.pre + Tm + 0.4,
+      truth: { travel: p.dir * p.travel, vmax: vm, amax: A.a, adec: D.a, jStart: p.jStart, jStop: p.jStop, Tm } };
+  }
+
+  return { analyzeRide, score, findings, verdict, Detector, makeRide, LIMITS, G0, lowpass, spectrum };
+})();
+/*CORE-END*/
+</script>
+
+<script>
+(() => {
+  const $ = s => document.querySelector(s);
+  const cssCache = {};
+  const css = name => cssCache[name] || (cssCache[name] = getComputedStyle(document.documentElement).getPropertyValue(name).trim());
+  const STORE = 'eri.v1';
+  const S = {
+    mode: 'off', det: null, lastEvt: 0, evtCount: 0, rateT0: 0, rate: 0,
+    hist: [], cumZ: 0, rides: [], settings: { lift: '', floorH: 3, startFloor: 0 },
+    wake: null, demoTimer: null, example: null, open: new Set(),
+    jerk: 0, lpPrev: null, tPrev: null, tripPeak: 0, sessionT0: 0,
+  };
+  const D = { v: 0, z: 0, a: 0, j: 0, pos: 0 }; // eased display values
+
+  // ---------- persistence ----------
+  function load() { try { const d = JSON.parse(localStorage.getItem(STORE) || 'null'); if (d) { S.rides = d.rides || []; Object.assign(S.settings, d.settings || {}); } } catch (e) {} }
+  function save() { try { localStorage.setItem(STORE, JSON.stringify({ rides: S.rides.slice(0, 40), settings: S.settings })); } catch (e) {} }
+
+  // ---------- formatting ----------
+  const ok = x => x != null && isFinite(x);
+  const f2 = x => ok(x) ? x.toFixed(2) : '—', f1 = x => ok(x) ? x.toFixed(1) : '—', f0 = x => ok(x) ? x.toFixed(0) : '—';
+  const sgn = (x, d) => (x < 0 && Math.abs(x).toFixed(d) !== (0).toFixed(d) ? '−' : '+') + Math.abs(x).toFixed(d);
+  const floorName = n => n === 0 ? 'G' : n < 0 ? 'B' + (-n) : String(n);
+  const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  let toastT;
+  function toast(msg) { const t = $('#toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('show'), 2800); }
+  function setChip(s, text) { $('#chip').dataset.s = s; $('#chipText').textContent = text; }
+  function sensorMsg(text) { const el = $('#sensorMsg'); el.hidden = !text; el.textContent = text || ''; }
+
+  // ---------- detector events ----------
+  function onDet(type, d) {
+    if (type === 'ready') setChip('idle', S.mode === 'demo' ? 'Sample · waiting for motion' : 'Armed · waiting for motion');
+    if (type === 'moved') setChip('moved', 'Phone moved · keep it still');
+    if (type === 'rideStart') { S.tripPeak = 0; setChip('ride', d.dir > 0 ? 'Car moving up' : 'Car moving down'); }
+    if (type === 'rideEnd') handleRideEnd(d);
+  }
+  function handleRideEnd(e) {
+    const res = Core.analyzeRide(e.samples, e.preEnd, e.postStart, { floorH: S.settings.floorH });
+    setChip('idle', S.mode === 'demo' ? 'Sample trip complete' : 'Armed · waiting for motion');
+    if (e.moved) { if (Math.abs(e.liveZ) > 1) S.cumZ += e.liveZ; toast('The phone moved during the trip, so it was not graded.'); return; }
+    if (res.rejected) { toast(res.message); return; }
+    S.cumZ += res.metrics.travel;
+    const sc = Core.score(res.metrics);
+    const ride = { id: Date.now(), at: new Date().toISOString(), lift: S.settings.lift || '', simulated: S.mode === 'demo',
+      floorH: S.settings.floorH, m: res.metrics, sc, series: res.series, vib: res.vib, spec: res.spec, marks: res.marks };
+    S.rides.unshift(ride); S.open = new Set([ride.id]);
+    save(); renderReports();
+    toast(`Ride ${S.rides.length} graded ${sc.grade} · ${sc.word} · ${sc.score}/100`);
+  }
+
+  // ---------- sensor ----------
+  function onMotion(ev) {
+    const g = ev.accelerationIncludingGravity;
+    if (!g || g.x == null) return;
+    const r = ev.rotationRate;
+    const rot = r && r.alpha != null ? Math.hypot(r.alpha || 0, r.beta || 0, r.gamma || 0) : 0;
+    const t = (ev.timeStamp || performance.now()) / 1000;
+    S.evtCount++; S.lastEvt = performance.now();
+    if (!S.rateT0) S.rateT0 = t;
+    if (t - S.rateT0 > 1) { S.rate = S.evtCount / (t - S.rateT0); S.evtCount = 0; S.rateT0 = t; }
+    feed({ t, ax: g.x, ay: g.y, az: g.z, rot });
+  }
+  function feed(s) {
+    const det = S.det; det.push(s);
+    const st = det.state, live = st !== 'calib';
+    if (live && S.tPrev != null && s.t > S.tPrev) {
+      const dt = Math.min(0.1, s.t - S.tPrev), jr = (det.lp - S.lpPrev) / dt;
+      S.jerk += (1 - Math.exp(-dt / 0.25)) * (jr - S.jerk);
+    } else if (!live) S.jerk = 0;
+    S.lpPrev = det.lp; S.tPrev = s.t;
+    if (st === 'ride') S.tripPeak = Math.max(S.tripPeak, Math.abs(det.lp));
+    S.hist.push({ t: s.t, a: live ? det.lp : null, ride: st === 'ride' });
+    const from = s.t - 20; let k = 0; while (k < S.hist.length && S.hist[k].t < from) k++; if (k) S.hist.splice(0, k);
+  }
+  function resetLive() { S.hist = []; S.jerk = 0; S.lpPrev = null; S.tPrev = null; S.tripPeak = 0; S.sessionT0 = performance.now(); }
+  function setStartBtn(running) {
+    const b = $('#btnStart');
+    b.classList.toggle('stop', running);
+    b.innerHTML = running ? '<svg viewBox="0 0 16 16" fill="currentColor"><rect x="3.5" y="3.5" width="9" height="9" rx="1.5"/></svg><span>Stop inspection</span>'
+                          : '<svg viewBox="0 0 16 16" fill="currentColor"><path d="M4 2.5v11l9-5.5z"/></svg><span>Start inspection</span>';
+  }
+  async function startLive() {
+    sensorMsg('');
+    if (!('DeviceMotionEvent' in window)) { setChip('error', 'No motion sensor'); sensorMsg('This browser has no access to motion sensors. Open the page on your phone in Chrome or Safari.'); return; }
+    if (!window.isSecureContext) sensorMsg('Motion sensors only work on an https:// link. Host this file (for example on Netlify or GitHub Pages) and open that link on your phone.');
+    try {
+      if (typeof DeviceMotionEvent.requestPermission === 'function') {
+        const r = await DeviceMotionEvent.requestPermission();
+        if (r !== 'granted') { setChip('error', 'Motion access denied'); sensorMsg('Motion access was denied. In Safari, reload the page and tap Allow when asked.'); return; }
+      }
+    } catch (e) { setChip('error', 'Motion access failed'); sensorMsg('Could not get motion access: ' + e.message); return; }
+    stopDemo();
+    S.det = new Core.Detector(onDet); resetLive(); S.evtCount = 0; S.rateT0 = 0; S.lastEvt = 0;
+    window.addEventListener('devicemotion', onMotion);
+    S.mode = 'live'; setChip('calib', 'Calibrating · keep still'); setStartBtn(true); requestWake();
+    setTimeout(() => {
+      if (S.mode === 'live' && !S.lastEvt) { setChip('error', 'No sensor data'); sensorMsg('No motion data is arriving. Laptops and desktops have no accelerometer, so open this link on your phone. On Android, check that motion sensors are allowed for the site.'); }
+    }, 2000);
+  }
+  function stopLive() {
+    window.removeEventListener('devicemotion', onMotion);
+    S.mode = 'off'; setChip('off', 'Standby'); setStartBtn(false); releaseWake();
+  }
+  async function requestWake() { try { if ('wakeLock' in navigator) S.wake = await navigator.wakeLock.request('screen'); } catch (e) {} }
+  function releaseWake() { try { S.wake && S.wake.release(); } catch (e) {} S.wake = null; }
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && S.mode === 'live') requestWake(); });
+
+  // ---------- sample replay ----------
+  function startDemo() {
+    if (S.mode === 'live') stopLive();
+    stopDemo();
+    const r = Core.makeRide({ travel: 12.2, vmax: 1.6, amax: 0.95, jStart: 1.1, jStop: 2.0, vibF: 11.5, vibA: 0.05, swayA: 0.035, pre: 3.5, post: 3.2, seed: (Math.random() * 1e6) | 0 });
+    S.det = new Core.Detector(onDet); resetLive(); S.mode = 'demo'; S.rate = 60;
+    setChip('calib', 'Sample · calibrating'); $('#btnDemo').textContent = 'Stop sample';
+    const speed = 2.5, t0 = performance.now(); let i = 0;
+    S.demoTimer = setInterval(() => {
+      const tNow = (performance.now() - t0) / 1000 * speed;
+      while (i < r.samples.length && r.samples[i].t <= tNow) feed(r.samples[i++]);
+      if (i >= r.samples.length) { stopDemo(); setChip('off', 'Sample done · tap Start for a real lift'); }
+    }, 30);
+  }
+  function stopDemo() {
+    if (S.demoTimer) clearInterval(S.demoTimer);
+    S.demoTimer = null; $('#btnDemo').textContent = 'Replay sample ride';
+    if (S.mode === 'demo') S.mode = 'off';
+  }
+
+  // ---------- canvas helpers ----------
+  function fitCanvas(c, h) {
+    const dpr = Math.min(3, window.devicePixelRatio || 1), w = c.clientWidth || 300;
+    if (h) c.style.height = h + 'px';
+    const H = h || c.clientHeight || 100;
+    if (c.width !== Math.round(w * dpr) || c.height !== Math.round(H * dpr)) { c.width = Math.round(w * dpr); c.height = Math.round(H * dpr); }
+    const ctx = c.getContext('2d'); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    return { ctx, w, h: H };
+  }
+  function rrect(ctx, x, y, w, h, r) { ctx.beginPath(); if (ctx.roundRect) ctx.roundRect(x, y, w, h, r); else ctx.rect(x, y, w, h); }
+  function alpha(hex, a) { const n = parseInt(hex.slice(1), 16); return `rgba(${n >> 16 & 255},${n >> 8 & 255},${n & 255},${a})`; }
+  function pill(ctx, text, x, y, align, color) {
+    ctx.font = `500 10.5px ${css('--font-mono')}`;
+    const w = ctx.measureText(text).width + 12, h = 18;
+    let px = align === 'right' ? x - w : align === 'center' ? x - w / 2 : x;
+    rrect(ctx, px, y - h / 2, w, h, 5); ctx.fillStyle = 'rgba(10,11,14,.88)'; ctx.fill();
+    ctx.strokeStyle = alpha(color, 0.45); ctx.lineWidth = 1; ctx.stroke();
+    ctx.fillStyle = color; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillText(text, px + 6, y + 0.5);
+  }
+
+  // ---------- live instruments ----------
+  function drawStrip() {
+    const { ctx, w, h } = fitCanvas($('#strip'));
+    ctx.clearRect(0, 0, w, h);
+    const cyan = css('--cyan'), dim = css('--dim'), mono = css('--font-mono');
+    const L = 34, R = 6, T = 6, B = 6, pw = w - L - R, ph = h - T - B;
+    const hist = S.hist, tEnd = hist.length ? hist[hist.length - 1].t : 0, tStart = tEnd - 20;
+    let amax = 0.5; for (const p of hist) if (p.a != null) amax = Math.max(amax, Math.abs(p.a) * 1.15);
+    amax = Math.ceil(amax * 2) / 2;
+    const X = t => L + (t - tStart) / 20 * pw, Y = a => T + ph / 2 - a / amax * ph / 2;
+    // trip bands
+    let rs = null;
+    for (let i = 0; i < hist.length; i++) {
+      if (hist[i].ride && rs == null) rs = hist[i].t;
+      if ((!hist[i].ride || i === hist.length - 1) && rs != null) {
+        const x0 = X(rs), x1 = X(hist[i].t), g = ctx.createLinearGradient(0, T, 0, T + ph);
+        g.addColorStop(0, 'rgba(34,211,238,.10)'); g.addColorStop(.5, 'rgba(34,211,238,.03)'); g.addColorStop(1, 'rgba(34,211,238,.10)');
+        ctx.fillStyle = g; ctx.fillRect(x0, T, x1 - x0, ph);
+        ctx.fillStyle = 'rgba(34,211,238,.5)'; ctx.fillRect(x0, T, 1, ph); rs = null;
+      }
+    }
+    // grid
+    ctx.font = `500 10px ${mono}`; ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+    for (let k = -2; k <= 2; k++) {
+      const v = k * amax / 2, y = Math.round(Y(v)) + 0.5;
+      ctx.strokeStyle = k === 0 ? 'rgba(255,255,255,.16)' : 'rgba(255,255,255,.05)'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(L, y); ctx.lineTo(w - R, y); ctx.stroke();
+      if (k % 2 === 0) { ctx.fillStyle = dim; ctx.fillText((v > 0 ? '+' : v < 0 ? '−' : '') + Math.abs(v).toFixed(1), L - 6, y); }
+    }
+    for (let s = 5; s < 20; s += 5) { const x = Math.round(L + s / 20 * pw) + 0.5; ctx.strokeStyle = 'rgba(255,255,255,.04)'; ctx.beginPath(); ctx.moveTo(x, T); ctx.lineTo(x, T + ph); ctx.stroke(); }
+    // trace
+    const pts = []; for (const p of hist) pts.push(p.a == null ? null : [X(p.t), Y(Math.max(-amax, Math.min(amax, p.a)))]);
+    const zeroY = Y(0);
+    let seg = [];
+    const flush = () => {
+      if (seg.length > 1) {
+        const g = ctx.createLinearGradient(0, T, 0, T + ph);
+        g.addColorStop(0, 'rgba(34,211,238,.28)'); g.addColorStop(.5, 'rgba(34,211,238,0)'); g.addColorStop(1, 'rgba(34,211,238,.28)');
+        ctx.beginPath(); ctx.moveTo(seg[0][0], zeroY); for (const q of seg) ctx.lineTo(q[0], q[1]); ctx.lineTo(seg[seg.length - 1][0], zeroY); ctx.closePath(); ctx.fillStyle = g; ctx.fill();
+        ctx.save(); ctx.shadowColor = css('--cyan-glow'); ctx.shadowBlur = 8; ctx.strokeStyle = cyan; ctx.lineWidth = 1.8; ctx.lineJoin = 'round';
+        ctx.beginPath(); seg.forEach((q, i) => i ? ctx.lineTo(q[0], q[1]) : ctx.moveTo(q[0], q[1])); ctx.stroke(); ctx.restore();
+      }
+      seg = [];
+    };
+    for (const q of pts) { if (!q) { flush(); continue; } seg.push(q); }
+    const last = seg[seg.length - 1]; flush();
+    if (last) {
+      ctx.save(); ctx.shadowColor = css('--cyan-glow'); ctx.shadowBlur = 12; ctx.fillStyle = cyan;
+      ctx.beginPath(); ctx.arc(last[0], last[1], 3.5, 0, Math.PI * 2); ctx.fill(); ctx.restore();
+    }
+    if (!hist.length) { ctx.fillStyle = dim; ctx.textAlign = 'center'; ctx.font = `500 12.5px ${css('--font-ui')}`; ctx.fillText('Trace appears while recording', L + pw / 2, T + ph / 2 - 16); }
+  }
+
+  function drawGauge(a) {
+    const { ctx, w, h } = fitCanvas($('#gauge'));
+    ctx.clearRect(0, 0, w, h);
+    const cyan = css('--cyan'), warn = css('--warn'), dim = css('--dim'), muted = css('--muted'), mono = css('--font-mono');
+    const R = Math.min(w / 2 - 18, h - 34), cx = w / 2, cy = 14 + R;
+    const A0 = Math.PI * (1 + 0.1), A1 = Math.PI * (2 - 0.1), RANGE = 1.5;
+    const ang = v => A0 + (Math.max(-RANGE, Math.min(RANGE, v)) + RANGE) / (2 * RANGE) * (A1 - A0);
+    ctx.lineCap = 'round';
+    // track
+    ctx.strokeStyle = 'rgba(255,255,255,.07)'; ctx.lineWidth = 8;
+    ctx.beginPath(); ctx.arc(cx, cy, R, A0, A1); ctx.stroke();
+    // caution zones
+    ctx.strokeStyle = alpha(warn, .35); ctx.lineWidth = 8; ctx.lineCap = 'butt';
+    ctx.beginPath(); ctx.arc(cx, cy, R, A0, ang(-1.2)); ctx.stroke();
+    ctx.beginPath(); ctx.arc(cx, cy, R, ang(1.2), A1); ctx.stroke();
+    // ticks
+    for (let v = -RANGE; v <= RANGE + 1e-9; v += 0.25) {
+      const an = ang(v), major = Math.abs(v * 2 - Math.round(v * 2)) < 1e-6 && Math.abs(v % 0.5) < 1e-6, r0 = R - 10, r1 = R - (major ? 17 : 13);
+      ctx.strokeStyle = major ? 'rgba(255,255,255,.35)' : 'rgba(255,255,255,.14)'; ctx.lineWidth = major ? 1.4 : 1;
+      ctx.beginPath(); ctx.moveTo(cx + Math.cos(an) * r0, cy + Math.sin(an) * r0); ctx.lineTo(cx + Math.cos(an) * r1, cy + Math.sin(an) * r1); ctx.stroke();
+      if (Math.abs(Math.abs(v) - 1.5) < 1e-6 || Math.abs(v) < 1e-6) {
+        ctx.fillStyle = dim; ctx.font = `500 9.5px ${mono}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        const rl = R - 28; ctx.fillText(v === 0 ? '0' : (v > 0 ? '+' : '−') + '1.5', cx + Math.cos(an) * rl, cy + Math.sin(an) * rl);
+      }
+    }
+    // value arc
+    const hot = Math.abs(a) > 1.2, col = hot ? warn : cyan;
+    ctx.save(); ctx.shadowColor = hot ? css('--warn-glow') : css('--cyan-glow'); ctx.shadowBlur = 12; ctx.strokeStyle = col; ctx.lineWidth = 8; ctx.lineCap = 'round';
+    const a0 = ang(0), a1 = ang(a);
+    if (Math.abs(a1 - a0) > 0.01) { ctx.beginPath(); ctx.arc(cx, cy, R, Math.min(a0, a1), Math.max(a0, a1)); ctx.stroke(); }
+    // marker
+    const an = ang(a);
+    ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(cx + Math.cos(an) * R, cy + Math.sin(an) * R, 5.5, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+    ctx.fillStyle = col; ctx.beginPath(); ctx.arc(cx + Math.cos(an) * R, cy + Math.sin(an) * R, 2.5, 0, Math.PI * 2); ctx.fill();
+    // readout
+    ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
+    ctx.fillStyle = css('--fg'); ctx.font = `500 ${Math.round(Math.min(30, R * 0.36))}px ${mono}`;
+    ctx.fillText(sgn(a, 2), cx, cy - R * 0.22);
+    ctx.fillStyle = muted; ctx.font = `500 10.5px ${mono}`;
+    ctx.fillText(`m/s² · ${(1 + a / Core.G0).toFixed(3)} g felt`, cx, cy - R * 0.22 + 18);
+    ctx.fillStyle = dim; ctx.font = `600 9.5px ${css('--font-ui')}`;
+    ctx.fillText('VERTICAL ACCELERATION', cx, h - 4);
+  }
+
+  function drawShaft(pos, v) {
+    const c = $('#shaft'); const { ctx, w, h } = fitCanvas(c);
+    ctx.clearRect(0, 0, w, h);
+    const cyan = css('--cyan'), dim = css('--dim'), mono = css('--font-mono');
+    const span = 5.2, fpx = h / span, Y = f => h / 2 - (f - pos) * fpx;
+    const left = 28, right = w - 8, carW = right - left - 10, carX = left + 5;
+    // hoistway
+    const g = ctx.createLinearGradient(left, 0, right, 0);
+    g.addColorStop(0, 'rgba(255,255,255,.035)'); g.addColorStop(.5, 'rgba(255,255,255,.012)'); g.addColorStop(1, 'rgba(255,255,255,.035)');
+    ctx.fillStyle = g; ctx.fillRect(left, 0, right - left, h);
+    ctx.fillStyle = 'rgba(255,255,255,.12)'; ctx.fillRect(left, 0, 1, h); ctx.fillRect(right - 1, 0, 1, h);
+    // landings
+    const cur = Math.round(pos);
+    ctx.font = `500 10.5px ${mono}`; ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+    for (let f = Math.floor(pos - span); f <= Math.ceil(pos + span); f++) {
+      const sill = Y(f) + fpx * 0.42;
+      if (sill < -20 || sill > h + 20) continue;
+      const isCur = f === cur;
+      ctx.fillStyle = isCur ? 'rgba(34,211,238,.55)' : 'rgba(255,255,255,.14)';
+      ctx.fillRect(left, Math.round(sill), 7, 1.5); ctx.fillRect(right - 7, Math.round(sill), 7, 1.5);
+      ctx.fillStyle = isCur ? cyan : dim; ctx.font = `${isCur ? 600 : 500} 10.5px ${mono}`;
+      ctx.fillText(floorName(f), left - 6, Y(f));
+    }
+    // cable
+    const cy = h / 2, ch = fpx * 0.78, top = cy - ch / 2;
+    ctx.strokeStyle = 'rgba(255,255,255,.22)'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(carX + carW / 2 - 2.5, 0); ctx.lineTo(carX + carW / 2 - 2.5, top); ctx.moveTo(carX + carW / 2 + 2.5, 0); ctx.lineTo(carX + carW / 2 + 2.5, top); ctx.stroke();
+    // motion trail
+    const sp = Math.min(1, Math.abs(v) / 1.6);
+    if (sp > 0.03) {
+      const len = ch * 1.6 * sp, dirUp = v > 0, y0 = dirUp ? top + ch : top, y1 = dirUp ? y0 + len : y0 - len;
+      const tg = ctx.createLinearGradient(0, y0, 0, y1); tg.addColorStop(0, `rgba(34,211,238,${0.28 * sp + 0.05})`); tg.addColorStop(1, 'rgba(34,211,238,0)');
+      ctx.fillStyle = tg; ctx.fillRect(carX + 3, Math.min(y0, y1), carW - 6, Math.abs(y1 - y0));
+    }
+    // car
+    ctx.save(); ctx.shadowColor = css('--cyan-glow'); ctx.shadowBlur = 14 + 10 * sp;
+    rrect(ctx, carX, top, carW, ch, 6);
+    const cg = ctx.createLinearGradient(0, top, 0, top + ch); cg.addColorStop(0, '#1b2733'); cg.addColorStop(1, '#0e151c');
+    ctx.fillStyle = cg; ctx.fill(); ctx.restore();
+    rrect(ctx, carX + 0.5, top + 0.5, carW - 1, ch - 1, 6); ctx.strokeStyle = cyan; ctx.lineWidth = 1.5; ctx.stroke();
+    // doors + cab light
+    ctx.fillStyle = 'rgba(34,211,238,.55)'; ctx.fillRect(carX + 8, top + 5, carW - 16, 1.5);
+    ctx.strokeStyle = 'rgba(255,255,255,.18)'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(carX + carW / 2, top + 10); ctx.lineTo(carX + carW / 2, top + ch - 5); ctx.stroke();
+    // vignette
+    const vg = ctx.createLinearGradient(0, 0, 0, h);
+    vg.addColorStop(0, 'rgba(8,9,12,.9)'); vg.addColorStop(.16, 'rgba(8,9,12,0)'); vg.addColorStop(.84, 'rgba(8,9,12,0)'); vg.addColorStop(1, 'rgba(8,9,12,.9)');
+    ctx.fillStyle = vg; ctx.fillRect(0, 0, w, h);
+  }
+
+  function setInst(id, text, frac, signed, warn) {
+    const el = $(id), val = el.querySelector('.inst-val'), bar = el.querySelector('.meter i');
+    if (val.textContent !== text) val.textContent = text;
+    val.classList.toggle('warn', !!warn); bar.classList.toggle('warn', !!warn);
+    const f = Math.max(-1, Math.min(1, frac));
+    if (signed) { bar.style.left = (f >= 0 ? 50 : 50 + f * 50) + '%'; bar.style.width = Math.abs(f) * 50 + '%'; }
+    else { bar.style.left = '0%'; bar.style.width = Math.abs(f) * 100 + '%'; }
+  }
+
+  let lastText = 0, lastFloor = null;
+  function frame(now) {
+    const d = S.det, live = d && d.state !== 'calib', inRide = d && d.state === 'ride';
+    const tv = inRide ? d.v : 0, ta = live ? d.lp : 0, tj = live ? S.jerk : 0;
+    const tz = S.cumZ + (inRide ? d.z : 0);
+    const k = 0.22;
+    D.v += (tv - D.v) * k; D.a += (ta - D.a) * k; D.j += (tj - D.j) * k; D.z += (tz - D.z) * k;
+    const posT = S.settings.startFloor + tz / S.settings.floorH; D.pos += (posT - D.pos) * 0.18;
+    if (now - lastText > 50) {
+      lastText = now;
+      const fh = S.settings.floorH;
+      setInst('#iSpeed', sgn(D.v, 2), D.v / 2.5, true, false);
+      setInst('#iHeight', sgn(D.z, 1), D.z / (5 * fh), true, false);
+      setInst('#iJerk', sgn(D.j, 2), D.j / 3, true, Math.abs(D.j) > Core.LIMITS.jerk.good);
+      setInst('#iPeak', S.tripPeak.toFixed(2), S.tripPeak / 2, false, S.tripPeak > Core.LIMITS.accel.good);
+      const fl = Math.round(posT), fe = $('#floorLed');
+      if (fl !== lastFloor) { fe.style.setProperty('--dy', lastFloor == null || fl > lastFloor ? '8px' : '-8px'); fe.textContent = floorName(fl); fe.classList.remove('tick'); void fe.offsetWidth; if (lastFloor != null) fe.classList.add('tick'); lastFloor = fl; }
+      const ch = $('#chev'); ch.classList.toggle('up', D.v > 0.05); ch.classList.toggle('down', D.v < -0.05);
+      $('#rate').textContent = S.mode === 'off' ? '— Hz' : `${S.rate ? S.rate.toFixed(0) : '··'} Hz`;
+      const ln = S.settings.lift || 'Lift'; if ($('#liftNameLed').textContent !== ln) $('#liftNameLed').textContent = ln;
+      const rec = $('#clock'); rec.classList.toggle('on', S.mode !== 'off');
+      if (S.mode !== 'off') { const s = Math.floor((now - S.sessionT0) / 1000); rec.textContent = `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`; }
+    }
+    drawStrip(); drawGauge(D.a); drawShaft(D.pos, D.v);
+    requestAnimationFrame(frame);
+  }
+
+  // ---------- report charts ----------
+  function niceTicks(lo, hi, count = 3) {
+    const span = hi - lo || 1, raw = span / count, mag = Math.pow(10, Math.floor(Math.log10(raw)));
+    const step = [1, 2, 2.5, 5, 10].map(m => m * mag).find(s => s >= raw) || 10 * mag;
+    const out = []; for (let v = Math.ceil(lo / step) * step; v <= hi + 1e-9; v += step) out.push(+v.toFixed(6));
+    return out;
+  }
+  function drawStack(canvas, cfg) {
+    const H = cfg.panels.reduce((s, p) => s + p.h, 0) + (cfg.panels.length - 1) * 14 + 26;
+    const { ctx, w, h } = fitCanvas(canvas, H);
+    ctx.clearRect(0, 0, w, h);
+    const L = 42, R = 10, xs = cfg.x, x0 = cfg.xmin ?? xs[0], x1 = cfg.xmax ?? xs[xs.length - 1];
+    const X = x => L + (x - x0) / (x1 - x0 || 1) * (w - L - R);
+    const dim = css('--dim'), muted = css('--muted'), mono = css('--font-mono'), ui = css('--font-ui');
+    let top = 0;
+    cfg.panels.forEach((p, pi) => {
+      const y0 = top + 18, y1 = top + p.h;
+      let lo = Infinity, hi = -Infinity;
+      for (const s of p.lines) for (const v of s.y) { if (v < lo) lo = v; if (v > hi) hi = v; }
+      for (const hl of (p.hlines || [])) { lo = Math.min(lo, hl.y); hi = Math.max(hi, hl.y); }
+      if (p.zero !== false) { lo = Math.min(lo, 0); hi = Math.max(hi, 0); }
+      if (p.sym) { const m = Math.max(Math.abs(lo), Math.abs(hi)); lo = -m; hi = m; }
+      const padv = (hi - lo) * 0.14 || 0.1; lo -= padv; hi += padv;
+      const Y = v => y1 - (v - lo) / (hi - lo) * (y1 - y0);
+      ctx.save(); ctx.beginPath(); ctx.rect(L, y0, w - L - R, y1 - y0); ctx.clip();
+      for (const sh of (cfg.shading || [])) {
+        const g = ctx.createLinearGradient(0, y0, 0, y1); g.addColorStop(0, sh.fill); g.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = g; ctx.fillRect(X(sh.a), y0, X(sh.b) - X(sh.a), y1 - y0);
+        ctx.fillStyle = sh.edge; ctx.fillRect(Math.round(X(sh.a)), y0, 1, y1 - y0); ctx.fillRect(Math.round(X(sh.b)), y0, 1, y1 - y0);
+      }
+      ctx.restore();
+      ctx.font = `500 10px ${mono}`; ctx.textAlign = 'right'; ctx.textBaseline = 'middle'; ctx.lineWidth = 1;
+      for (const tv of niceTicks(lo, hi, 2)) {
+        const y = Math.round(Y(tv)) + 0.5;
+        ctx.strokeStyle = tv === 0 ? 'rgba(255,255,255,.16)' : 'rgba(255,255,255,.05)';
+        ctx.beginPath(); ctx.moveTo(L, y); ctx.lineTo(w - R, y); ctx.stroke();
+        ctx.fillStyle = dim; ctx.fillText(Math.abs(tv) >= 10 ? tv.toFixed(0) : (tv === 0 ? '0' : tv.toFixed(1)), L - 7, y);
+      }
+      ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic'; ctx.font = `600 9.5px ${ui}`; ctx.fillStyle = muted;
+      ctx.fillText(p.label.toUpperCase().split('').join(String.fromCharCode(8202)), L, top + 10);
+      for (const s of p.lines) {
+        const sx = s.x || xs, base = Y(Math.max(lo, Math.min(hi, 0)));
+        if (s.fill !== false) {
+          const g = ctx.createLinearGradient(0, y0, 0, y1);
+          const up = alpha(s.color, .22), mid = alpha(s.color, 0);
+          if (base <= y0 + 1) { g.addColorStop(0, mid); g.addColorStop(1, up); }
+          else if (base >= y1 - 1) { g.addColorStop(0, up); g.addColorStop(1, mid); }
+          else { const f = (base - y0) / (y1 - y0); g.addColorStop(0, up); g.addColorStop(f, mid); g.addColorStop(1, up); }
+          ctx.beginPath(); ctx.moveTo(X(sx[0]), base);
+          for (let i = 0; i < s.y.length; i++) ctx.lineTo(X(sx[i]), Y(s.y[i]));
+          ctx.lineTo(X(sx[s.y.length - 1]), base); ctx.closePath(); ctx.fillStyle = g; ctx.fill();
+        }
+        ctx.save(); ctx.shadowColor = alpha(s.color, .6); ctx.shadowBlur = s.glow ?? 6;
+        ctx.strokeStyle = s.color; ctx.lineWidth = s.width || 1.8; ctx.lineJoin = 'round'; ctx.beginPath();
+        for (let i = 0; i < s.y.length; i++) { const x = X(sx[i]), y = Y(s.y[i]); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }
+        ctx.stroke(); ctx.restore();
+      }
+      for (const hl of (p.hlines || [])) {
+        const y = Math.round(Y(hl.y)) + 0.5;
+        ctx.strokeStyle = alpha(hl.color, .55); ctx.setLineDash([3, 4]); ctx.beginPath(); ctx.moveTo(L, y); ctx.lineTo(w - R, y); ctx.stroke(); ctx.setLineDash([]);
+        if (hl.text) pill(ctx, hl.text, w - R - 2, Math.max(y0 + 9, Math.min(y1 - 9, y + (hl.y >= 0 ? -12 : 12))), 'right', hl.color);
+      }
+      for (const mk of (p.markers || [])) {
+        const x = X(mk.x), y = Y(mk.y);
+        ctx.save(); ctx.shadowColor = alpha(mk.color, .9); ctx.shadowBlur = 10;
+        ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(x, y, 4.5, 0, Math.PI * 2); ctx.fill(); ctx.restore();
+        ctx.fillStyle = mk.color; ctx.beginPath(); ctx.arc(x, y, 2.2, 0, Math.PI * 2); ctx.fill();
+        ctx.font = `500 10.5px ${mono}`;
+        const tw = ctx.measureText(mk.text).width + 12, right = x + 10 + tw < w - R;
+        const ty = Math.max(y0 + 9, Math.min(y1 - 9, y + (mk.y >= 0 ? -13 : 13)));
+        pill(ctx, mk.text, right ? x + 9 : x - 9, ty, right ? 'left' : 'right', mk.color);
+      }
+      top = y1 + 14;
+      if (pi === cfg.panels.length - 1) {
+        ctx.font = `500 10px ${mono}`; ctx.fillStyle = dim; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+        for (const tv of niceTicks(x0, x1, Math.max(3, Math.floor((w - L) / 72)))) ctx.fillText(tv + (cfg.xUnit || ''), X(tv), y1 + 8);
+      }
+    });
+  }
+  function profileChart(canvas, r) {
+    const s = r.series, mk = r.marks, m = r.m;
+    const cyan = css('--cyan'), pink = css('--pink'), blue = css('--blue'), violet = css('--violet');
+    drawStack(canvas, {
+      x: s.t, xUnit: ' s',
+      shading: [{ a: mk.phases.acc[0], b: mk.phases.acc[1], fill: 'rgba(34,211,238,.10)', edge: 'rgba(34,211,238,.18)' },
+                { a: mk.phases.dec[0], b: mk.phases.dec[1], fill: 'rgba(167,139,250,.10)', edge: 'rgba(167,139,250,.2)' }],
+      panels: [
+        { label: 'Acceleration · m/s²', h: 98, lines: [{ y: s.a, color: cyan }],
+          markers: [{ x: mk.accel.t, y: mk.accel.y, text: `start ${f2(m.peakAccel)}`, color: cyan }, { x: mk.decel.t, y: mk.decel.y, text: `stop ${f2(m.peakDecel)}`, color: cyan }] },
+        { label: 'Jerk · m/s³', h: 88, lines: [{ y: s.j, color: pink, width: 1.5 }],
+          markers: [{ x: mk.jStart.t, y: mk.jStart.y, text: f2(m.startJerk), color: pink }, { x: mk.jStop.t, y: mk.jStop.y, text: f2(m.stopJerk), color: pink }] },
+        { label: 'Speed · m/s', h: 88, lines: [{ y: s.v, color: blue }], hlines: [{ y: m.dir * m.vmax, text: `top ${f2(m.vmax)} m/s`, color: blue }] },
+        { label: 'Height · m', h: 88, lines: [{ y: s.z, color: violet }], hlines: [{ y: m.travel, text: `${f1(Math.abs(m.travel))} m · ${f1(m.floors)} fl`, color: violet }] },
+      ],
+    });
+  }
+  function vibChart(canvas, r) {
+    const v = r.vib, m = r.m, cyan = css('--cyan'), violet = css('--violet'), muted = css('--muted');
+    drawStack(canvas, {
+      x: v.t, xUnit: ' s', panels: [
+        { label: 'Vertical · mg', h: 92, sym: true, lines: [{ y: v.z, color: cyan, width: 1.1, fill: false, glow: 4 }], hlines: [{ y: m.vibV / 2, text: `A95 ${f0(m.vibV)} mg pk-pk`, color: muted }, { y: -m.vibV / 2, color: muted }] },
+        { label: 'Sideways · mg', h: 92, sym: true, lines: [{ y: v.h, color: violet, width: 1.1, fill: false, glow: 4 }], hlines: [{ y: m.vibH / 2, text: `A95 ${f0(m.vibH)} mg pk-pk`, color: muted }, { y: -m.vibH / 2, color: muted }] },
+      ],
+    });
+  }
+  function specChart(canvas, r) {
+    const sp = r.spec, m = r.m, cyan = css('--cyan');
+    drawStack(canvas, {
+      x: sp.f, xUnit: ' Hz', xmin: 0, panels: [
+        { label: 'Vertical spectrum · mg', h: 104, lines: [{ y: sp.a, color: cyan, width: 1.5 }],
+          markers: m.domF ? [{ x: m.domF, y: m.domA, text: `${f1(m.domF)} Hz · ${f1(m.domA)} mg`, color: cyan }] : [] },
+      ],
+    });
+  }
+
+  // ---------- report markup ----------
+  function bar(k, v) {
+    const L = Core.LIMITS[k], max = L.fair * 1.6, pct = x => Math.min(100, x / max * 100);
+    return `<div class="bar" aria-hidden="true"><span class="z-good" style="width:${pct(L.good)}%"></span><span class="z-fair" style="width:${pct(L.fair) - pct(L.good)}%"></span><span class="z-poor" style="flex:1"></span><span class="mark" style="left:${Math.max(1, pct(v))}%"></span></div>`;
+  }
+  function metricRow(name, k, v, unit, digits) {
+    const rt = v <= Core.LIMITS[k].good ? 'good' : v <= Core.LIMITS[k].fair ? 'fair' : 'poor';
+    return `<div class="metric"><span class="m-name">${name}</span><span class="m-val">${v.toFixed(digits)}<span class="u">${unit}</span><span class="rate ${rt}">${rt}</span></span>${bar(k, v)}</div>`;
+  }
+  function ring(sc) {
+    const C = 2 * Math.PI * 42, off = C * (1 - sc.score / 100);
+    return `<div><div class="ring g-${sc.grade}" role="img" aria-label="Grade ${sc.grade}, ${sc.word}, score ${sc.score} of 100">
+      <svg viewBox="0 0 100 100"><circle class="track" cx="50" cy="50" r="42" fill="none" stroke-width="6"/><circle class="prog" cx="50" cy="50" r="42" fill="none" stroke-width="6" stroke-linecap="round" stroke-dasharray="${C.toFixed(1)}" stroke-dashoffset="${C.toFixed(1)}" data-off="${off.toFixed(1)}"/></svg>
+      <div class="in"><span class="letter">${sc.grade}</span><span class="sc">${sc.score}/100</span></div></div>
+      <div class="ring-word g-${sc.grade}">${sc.word}</div></div>`;
+  }
+  function sheetHTML(r, idx, isExample) {
+    const m = r.m, sc = r.sc;
+    const when = new Date(r.at).toLocaleString([], { hour: '2-digit', minute: '2-digit', day: 'numeric', month: 'short' });
+    const floors = Math.round(m.floors);
+    const tag = r.simulated ? '<span class="pill sim">Simulated</span>' : '';
+    const eyebrow = isExample ? 'Example report' : `Ride ${idx} · ${esc(r.lift || 'Unnamed lift')} · ${when}`;
+    const fnd = Core.findings(m).map(f => `<li class="${f.level}"><div><b>${esc(f.title)}</b><span>${esc(f.cause)}</span></div></li>`).join('');
+    const q = [`<span>${f0(m.srcRate)} Hz sensor</span>`];
+    if (m.noise != null) q.push(`<span${m.noise > 10 ? ' class="bad"' : ''}>noise floor ${f1(m.noise)} mg</span>`);
+    q.push(`<span${m.driftRatio > 0.2 ? ' class="bad"' : ''}>drift corrected ${f0(m.driftRatio * 100)}%</span>`);
+    q.push(`<span${m.tiltDeg > 3 ? ' class="bad"' : ''}>tilt change ${f1(m.tiltDeg)}°</span>`);
+    if (m.driftRatio > 0.2 || m.tiltDeg > 3) q.push('<span class="bad">phone may have shifted: distance less certain</span>');
+    return `
+      <header class="sheet-head">
+        <div>
+          <div class="eyebrow">${eyebrow}${tag}</div>
+          <h3>${m.dir > 0 ? 'Up' : 'Down'} ${floors} floor${floors === 1 ? '' : 's'} <span class="mono" style="color:var(--muted)">· ${f1(Math.abs(m.travel))} m</span></h3>
+          <p class="verdict">${esc(Core.verdict(m, sc))}</p>
+        </div>
+        ${ring(sc)}
+      </header>
+      <div class="kpis">
+        <div class="well kpi"><span class="eyebrow">Travel</span><b>${f1(Math.abs(m.travel))}<small>m</small></b><span class="sub">${f1(m.floors)} × ${f2(r.floorH)} m</span></div>
+        <div class="well kpi"><span class="eyebrow">Top speed</span><b>${f2(m.vmax)}<small>m/s</small></b><span class="sub">${m.hasCruise ? `steady ${f1(m.cruiseTime)} s` : 'never steady'}</span></div>
+        <div class="well kpi"><span class="eyebrow">Trip time</span><b>${f1(m.tripTime)}<small>s</small></b><span class="sub">car in motion</span></div>
+        <div class="well kpi"><span class="eyebrow">Avg speed</span><b>${f2(Math.abs(m.travel) / m.tripTime)}<small>m/s</small></b><span class="sub">${f1(Math.abs(m.travel) / m.tripTime * 60 / r.floorH)} floors/min</span></div>
+      </div>
+      <div class="metrics">
+        ${metricRow('Start acceleration', 'accel', m.peakAccel, 'm/s²', 2)}
+        ${metricRow('Stop deceleration', 'accel', m.peakDecel, 'm/s²', 2)}
+        ${metricRow('Start jerk', 'jerk', m.startJerk, 'm/s³', 2)}
+        ${metricRow('Stop jerk', 'jerk', m.stopJerk, 'm/s³', 2)}
+        ${metricRow('Vertical vibration · A95 pk-pk', 'vibV', m.vibV, 'mg', 0)}
+        ${metricRow('Sideways vibration · A95 pk-pk', 'vibH', m.vibH, 'mg', 0)}
+      </div>
+      <figure>
+        <figcaption><span class="eyebrow">Ride profile</span><span class="legend"><span><i style="background:rgba(34,211,238,.35)"></i>speeding up</span><span><i style="background:rgba(167,139,250,.35)"></i>slowing down</span></span></figcaption>
+        <div class="well"><canvas class="chart" data-chart="profile"></canvas></div>
+      </figure>
+      <figure>
+        <figcaption><span class="eyebrow">Vibration ${m.hasCruise ? 'at steady speed' : 'over the trip'}</span></figcaption>
+        <div class="well"><canvas class="chart" data-chart="vib"></canvas></div>
+        ${r.spec ? '<div class="well"><canvas class="chart" data-chart="spec"></canvas></div>' : ''}
+      </figure>
+      <div style="display:flex;flex-direction:column;gap:10px"><span class="eyebrow">Findings</span><ul class="findings">${fnd}</ul></div>
+      <div class="quality">${q.join('')}</div>`;
+  }
+  function drawSheetCharts(el, r) {
+    const p = el.querySelector('[data-chart="profile"]'), v = el.querySelector('[data-chart="vib"]'), s = el.querySelector('[data-chart="spec"]');
+    if (p) profileChart(p, r); if (v && r.vib.t.length > 2) vibChart(v, r); if (s && r.spec) specChart(s, r);
+  }
+  function animateRings(root) {
+    requestAnimationFrame(() => requestAnimationFrame(() => root.querySelectorAll('.ring .prog').forEach(c => c.style.strokeDashoffset = c.dataset.off)));
+  }
+  function addSheet(box, r, idx, isExample, collapsible) {
+    const el = document.createElement('article'); el.className = 'card sheet'; el.innerHTML = sheetHTML(r, idx, isExample);
+    if (collapsible) {
+      const act = document.createElement('div'); act.className = 'sheet-actions';
+      act.innerHTML = '<button class="btn small quiet" type="button">Collapse</button>';
+      act.firstChild.onclick = () => { S.open.delete(r.id); renderReports(); };
+      el.appendChild(act);
+    }
+    box.appendChild(el); el._ride = r; drawSheetCharts(el, r); animateRings(el);
+  }
+  function renderReports() {
+    const box = $('#reports'); box.innerHTML = '';
+    const rides = S.rides;
+    $('#repActions').hidden = !rides.length;
+    if (!rides.length) {
+      if (!S.example) S.example = buildExample();
+      const b = document.createElement('div'); b.className = 'notice info';
+      b.textContent = 'No rides recorded yet. Below is an example report from a simulated 4-floor trip, so you can see what you will get.';
+      box.appendChild(b); addSheet(box, S.example, 0, true, false);
+      $('#compareBox').hidden = true; return;
+    }
+    rides.forEach((r, i) => {
+      const idx = rides.length - i;
+      if (S.open.has(r.id)) { addSheet(box, r, idx, false, true); return; }
+      const b = document.createElement('button'); b.type = 'button'; b.className = `card history-item g-${r.sc.grade}`;
+      const m = r.m;
+      b.innerHTML = `<span class="mini">${r.sc.grade}</span><span class="h-main"><b>Ride ${idx} · ${m.dir > 0 ? 'Up' : 'Down'} ${f1(Math.abs(m.travel))} m${r.simulated ? ' · simulated' : ''}</b><span>${esc(r.lift || 'Unnamed lift')} · ${f2(m.vmax)} m/s · jerk ${f2(Math.max(m.startJerk, m.stopJerk))} · vib ${f0(m.vibV)}/${f0(m.vibH)} mg</span></span><svg class="h-open" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="m6 3.5 4.5 4.5L6 12.5"/></svg>`;
+      b.onclick = () => { S.open.add(r.id); renderReports(); };
+      box.appendChild(b);
+    });
+    renderCompare();
+  }
+  function renderCompare() {
+    const rides = S.rides, box = $('#compareBox');
+    box.hidden = rides.length < 2; if (rides.length < 2) return;
+    let h = '<thead><tr><th>Ride</th><th>Dir</th><th>Travel m</th><th>Top m/s</th><th>Acc / Dec</th><th>Jerk st / sp</th><th>Vib V / H mg</th><th>Grade</th></tr></thead><tbody>';
+    rides.forEach((r, i) => {
+      const m = r.m, col = r.sc.grade <= 'B' ? '--good' : r.sc.grade === 'C' ? '--warn' : '--bad';
+      h += `<tr><td>${rides.length - i}${r.simulated ? '*' : ''}</td><td style="color:var(--cyan)">${m.dir > 0 ? '▲' : '▼'}</td><td>${f1(Math.abs(m.travel))}</td><td>${f2(m.vmax)}</td><td>${f2(m.peakAccel)} / ${f2(m.peakDecel)}</td><td>${f2(m.startJerk)} / ${f2(m.stopJerk)}</td><td>${f0(m.vibV)} / ${f0(m.vibH)}</td><td><span class="gd" style="color:var(${col})">${r.sc.grade}</span> ${r.sc.score}</td></tr>`;
+    });
+    $('#compare').innerHTML = h + '</tbody>';
+  }
+  function buildExample() {
+    const r = Core.makeRide({ travel: 12.2, vmax: 1.6, amax: 0.95, jStart: 1.1, jStop: 2.0, vibF: 11.5, vibA: 0.05, swayA: 0.035, seed: 42 });
+    const res = Core.analyzeRide(r.samples, r.preEnd, r.postStart, { floorH: 3.05 });
+    return { id: 0, at: new Date().toISOString(), lift: 'Example', simulated: true, floorH: 3.05, m: res.metrics, sc: Core.score(res.metrics), series: res.series, vib: res.vib, spec: res.spec, marks: res.marks };
+  }
+  function renderLimits() {
+    const L = Core.LIMITS;
+    let h = '<thead><tr><th>Measure</th><th>Good</th><th>Fair</th><th>Poor</th><th>Weight</th></tr></thead><tbody>';
+    for (const k in L) h += `<tr><td style="font-family:var(--font-ui)">${L[k].name}</td><td style="color:var(--good)">≤ ${L[k].good}</td><td style="color:var(--warn)">≤ ${L[k].fair}</td><td style="color:var(--bad)">&gt; ${L[k].fair} ${L[k].unit}</td><td>${L[k].w * 100}%</td></tr>`;
+    $('#limitsTable').innerHTML = h + '</tbody>';
+  }
+
+  // ---------- export ----------
+  function exportCsv() {
+    const rows = ['ride,lift,simulated,t_s,accel_up_mps2,jerk_mps3,speed_mps,height_m'];
+    const sum = ['# Elevator Ride Inspector export ' + new Date().toISOString(), '# ride,lift,dir,travel_m,top_speed_mps,trip_s,start_accel,stop_decel,start_jerk,stop_jerk,vib_v_A95_mg,vib_h_A95_mg,dominant_hz,score,grade'];
+    S.rides.slice().reverse().forEach((r, i) => {
+      const m = r.m, n = i + 1, lift = `"${(r.lift || '').replace(/"/g, '""')}"`;
+      sum.push(`# ${n},${lift},${m.dir > 0 ? 'up' : 'down'},${f2(Math.abs(m.travel))},${f2(m.vmax)},${f1(m.tripTime)},${f2(m.peakAccel)},${f2(m.peakDecel)},${f2(m.startJerk)},${f2(m.stopJerk)},${f1(m.vibV)},${f1(m.vibH)},${m.domF ? f1(m.domF) : ''},${r.sc.score},${r.sc.grade}`);
+      const s = r.series; for (let k = 0; k < s.t.length; k++) rows.push(`${n},${lift},${r.simulated ? 1 : 0},${s.t[k]},${s.a[k]},${s.j[k]},${s.v[k]},${s.z[k]}`);
+    });
+    const blob = new Blob([sum.concat(rows).join('\n')], { type: 'text/csv' });
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `lift-rides-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-')}.csv`;
+    document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+    toast('CSV saved');
+  }
+  function summaryText() {
+    return S.rides.slice().reverse().map((r, i) => {
+      const m = r.m;
+      return `Ride ${i + 1} (${r.lift || 'lift'}): ${m.dir > 0 ? 'up' : 'down'} ${f1(Math.abs(m.travel))} m, top ${f2(m.vmax)} m/s, accel ${f2(m.peakAccel)}/${f2(m.peakDecel)} m/s², jerk ${f2(m.startJerk)}/${f2(m.stopJerk)} m/s³, vibration ${f0(m.vibV)}/${f0(m.vibH)} mg → ${r.sc.grade} (${r.sc.score}/100)${r.simulated ? ' [simulated]' : ''}`;
+    }).join('\n');
+  }
+  async function copySummary() {
+    const txt = summaryText();
+    try { await navigator.clipboard.writeText(txt); toast('Summary copied'); }
+    catch (e) { const ta = document.createElement('textarea'); ta.value = txt; document.body.appendChild(ta); ta.select(); try { document.execCommand('copy'); toast('Summary copied'); } catch (e2) { toast('Copy failed'); } ta.remove(); }
+  }
+  let clearArm = 0;
+  function clearRides() {
+    const b = $('#btnClear');
+    if (Date.now() - clearArm > 3000) { clearArm = Date.now(); b.textContent = 'Tap again to clear'; setTimeout(() => { b.textContent = 'Clear rides'; }, 3000); return; }
+    S.rides = []; S.cumZ = 0; S.open.clear(); save(); renderReports(); b.textContent = 'Clear rides'; toast('Rides cleared');
+  }
+
+  // ---------- settings ----------
+  function bindSettings() {
+    const lift = $('#setLift'), fh = $('#setFloorH'), st = $('#setStart');
+    lift.value = S.settings.lift; fh.value = (+S.settings.floorH).toFixed(2); st.value = S.settings.startFloor;
+    lift.oninput = () => { S.settings.lift = lift.value.trim(); save(); };
+    fh.onchange = () => { const v = parseFloat(fh.value); if (v >= 2 && v <= 8) { S.settings.floorH = v; save(); } else fh.value = S.settings.floorH; };
+    st.onchange = () => { const v = parseInt(st.value, 10); if (isFinite(v)) { S.settings.startFloor = v; save(); } };
+  }
+
+  // ---------- boot ----------
+  load(); bindSettings(); renderLimits(); renderReports();
+  D.pos = S.settings.startFloor;
+  $('#btnStart').onclick = () => (S.mode === 'live' ? stopLive() : startLive());
+  $('#btnDemo').onclick = () => (S.demoTimer ? (stopDemo(), setChip('off', 'Standby')) : startDemo());
+  $('#btnCsv').onclick = exportCsv; $('#btnCopy').onclick = copySummary; $('#btnClear').onclick = clearRides;
+  const redraw = () => document.querySelectorAll('.sheet').forEach(el => el._ride && drawSheetCharts(el, el._ride));
+  let rt; window.addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(redraw, 150); });
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(redraw);
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
